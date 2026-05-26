@@ -31,6 +31,9 @@ class OpenGLBackend::Pimpl
 	using MeshBuffers = std::pair<VertexBuffer, GLBuffer>;
 
 public:
+	Pimpl() = default;	
+	~Pimpl() = default;
+	
 	virtual bool Startup()
 	{
 		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
@@ -42,7 +45,6 @@ public:
 			std::cout << "Failed to Create GLFW Window" << std::endl;
 			return false;
 		}
-		glfwMakeContextCurrent(pWindow);
 
 		if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
 		{
@@ -54,6 +56,9 @@ public:
 	}
 	virtual RenderResult Render(const EvaluatedScene& Scene, const RenderSettings& Settings)
 	{
+		GLFWwindow* pPrevContext = glfwGetCurrentContext();
+		glfwMakeContextCurrent(pWindow);
+		
 		std::vector<std::tuple<MeshBuffers, GLuint, GLBuffer>> Meshes;
 
 		Meshes.reserve(Scene.Models.size());
@@ -127,7 +132,8 @@ public:
 		RenderResult Result = GetResults(FrameBuffer);
 
 		ReleaseFrameBuffer(FrameBuffer);
-		
+
+		glfwMakeContextCurrent(pPrevContext);
 		return std::move(Result);
 	}
 
@@ -289,8 +295,9 @@ public:
 			
 			if (Buffer.Size >= Size)
 			{
+				
 				//Check if the Aquire was successfull
-				bool bWasInActive = std::atomic_fetch_or(bIsActive.get(), 1);
+				bool bWasInActive = bIsActive->fetch_or(1);
 
 				if (bWasInActive)
 				{
@@ -306,7 +313,7 @@ public:
 		glGenBuffers(1, &NewBuffer.Id);
 		glNamedBufferData(NewBuffer.Id, Size, NULL, bIsStorage ? GL_SHADER_STORAGE_BUFFER : GL_UNIFORM_BUFFER);
 		
-		DynamicBuffers.push_back({std::make_unique<std::atomic_bool>(), NewBuffer});
+		DynamicBuffers.push_back({std::make_unique<std::atomic_char>(), NewBuffer});
 		return NewBuffer;
 	}
 	void ReleaseDynamicBuffer(const GLBuffer& Buffer)
@@ -459,7 +466,7 @@ private:
 	GLFWwindow* pWindow;
 	std::unordered_map<AssetID, MeshBuffers> Meshes;
 	std::unordered_map<AssetID, GLuint> Shaders;
-	std::vector<std::pair<std::unique_ptr<std::atomic_bool>, GLBuffer>> DynamicBuffers;
+	std::vector<std::pair<std::unique_ptr<std::atomic_char>, GLBuffer>> DynamicBuffers;
 };
 
 bool OpenGLBackend::Startup()
@@ -592,3 +599,9 @@ bool ValidateProgram(GLuint program)
 	
 	return true;
 }
+
+OpenGLBackend::OpenGLBackend() : pImpl(new Pimpl())
+{
+	
+}
+OpenGLBackend::~OpenGLBackend() = default;

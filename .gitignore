@@ -15,3 +15,4 @@ CMakeUserPresets.json
 /build
 /Old
 *.dmp
+/UI/.vscode

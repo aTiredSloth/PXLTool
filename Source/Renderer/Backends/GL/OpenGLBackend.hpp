@@ -6,12 +6,13 @@
 class OpenGLBackend final : public IRenderBackend
 {
 public:
-	virtual ~OpenGLBackend() = default;
-	virtual bool Startup();
-	virtual void Shutdown();
-	virtual RenderResult Render(const EvaluatedScene& Scene, const RenderSettings& Settings);
-private:
 	class Pimpl;
+	OpenGLBackend();
+	~OpenGLBackend();
+	bool Startup() override;
+	void Shutdown() override;
+	RenderResult Render(const EvaluatedScene& Scene, const RenderSettings& Settings) override;
+private:
 	std::unique_ptr<Pimpl> pImpl;
 };
 
