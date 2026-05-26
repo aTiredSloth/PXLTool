@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
 
 	let Scenes = $state<string[]>([]);
+	let NewSceneName = $state("NewScene");
 	
 	async function LoadScenes()
 	{
@@ -22,9 +23,12 @@
 
 
 <div>
-	<button onclick={CreateScene}>
-		New Scene
-	</button>
+	<div>
+		<input value={NewSceneName}"/>
+		<button onclick={CreateScene}>
+			
+		</button>
+	</div>
 	
 	<div>
 		{#each Scenes as SceneId}

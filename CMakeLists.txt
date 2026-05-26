@@ -71,3 +71,7 @@ CPMAddPackage(
   GIT_REPOSITORY "https://github.com/saucer/saucer"
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE saucer::saucer)
+
+#SQLite
+find_package(SQLiteCpp REQUIRED)
+target_link_libraries(${PROJECT_NAME} PRIVATE SQLiteCpp)

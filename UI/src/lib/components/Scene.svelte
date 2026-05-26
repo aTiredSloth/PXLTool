@@ -1,5 +1,5 @@
 <script lang="ts">
-	import ScenePreview from "./scene-view.svelte";
+	import ScenePreview from "./ScenePreview.svelte";
 	let Id = $props();
 </script>
 

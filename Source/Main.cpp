@@ -1,5 +1,6 @@
 #include "Renderer/OfflineRenderer.hpp"
 #include "UI/UI.hpp"
+#include <SQLiteCpp/Database.h>
 
 int main(int argc, char* argv[])
 {
@@ -8,7 +9,9 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 
-	auto Result = UI::Start();
+	SQLite::Database DB("savedata.db3", SQLite::OPEN_CREATE);
+	
+	auto Result = UI::Start(DB);
 	
 	OfflineRenderer::Shutdown();
 	

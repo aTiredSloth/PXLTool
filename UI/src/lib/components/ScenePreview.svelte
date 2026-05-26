@@ -10,4 +10,4 @@
 	}
 </script>
 
-<img src={image} alt="Render">
+<img src={image} alt="Render"/>
