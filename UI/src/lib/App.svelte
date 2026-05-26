@@ -1,42 +1,56 @@
 <script lang="ts">
-    import { onMount } from "svelte";
-
-	let Scenes = $state<string[]>([]);
+	import { onMount } from "svelte";
+   import SceneComponent from "./components/SceneComponent.svelte";
+	
+	let Scenes = $state<Scene[]>([]);
 	let NewSceneName = $state("NewScene");
+	let CurrentScene = $state<Scene | null>();
 	
 	async function LoadScenes()
 	{
 		const response = await fetch('/api/scenes');
-		Scenes = await response.json();
+		let LoadedScenesJson = await response.json();
+		let LoadedScenes: Scene[] = [];
+		for (const item of LoadedScenesJson)
+		{
+			LoadedScenes.push(item);
+		}
+
+		Scenes = LoadedScenes;
 	}
 
 	onMount(()=>{LoadScenes()})
 
 	async function CreateScene()
 	{
-		const response = await fetch('/api/newscene');
-		const text = await response.text();
-
-		Scenes = Scenes.concat(text);
+		await fetch('/api/newscene/' + NewSceneName);
+		LoadScenes();
 	}
 </script>
 
 
 <div>
 	<div>
-		<input value={NewSceneName}"/>
+		<input bind:value={NewSceneName}/>
 		<button onclick={CreateScene}>
-			
+			Submit
 		</button>
 	</div>
 	
 	<div>
 		{#each Scenes as SceneId}
-			<button>
-				${SceneId}
-			</button>
+			<li>
+				<button onclick={()=>{CurrentScene = SceneId}}>
+					{SceneId.Name}
+				</button>
+			</li>
 		{/each}
 	</div>
-	
-	
+
+	<div>
+		{#if CurrentScene}
+			<SceneComponent Id={CurrentScene}/>
+		{/if}
+	</div>
+
 </div>

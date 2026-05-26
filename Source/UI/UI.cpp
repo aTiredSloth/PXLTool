@@ -47,7 +47,7 @@ namespace UI
 		
 		RegisterAPI(DB);
 		
-		Server = App.port(Port).run_async();
+		Server = App.port(Port).multithreaded().run_async();
 		auto Result = saucer::application::create({ .id = "PXLTool" })->run(start);
 		App.stop();
 		
@@ -107,8 +107,8 @@ namespace UI
 
            		Json[i]["Name"] = Name;
              	Json[i]["Time"] = Time;
-             	Json[i]["Camera"] = crow::json::wvalue(CameraData);
-             	Json[i]["Models"] = crow::json::wvalue(Models);
+             	Json[i]["Camera"] = crow::json::load(CameraData);
+             	Json[i]["Models"] = crow::json::load(Models);
               	i += 1;
     			}
 			}
