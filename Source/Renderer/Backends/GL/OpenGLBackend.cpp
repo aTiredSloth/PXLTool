@@ -75,8 +75,9 @@ public:
 			std::cout << "Failed to Load Glad" << std::endl;
 			return false;
 		}
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		glfwMakeContextCurrent(nullptr);
-
+		
 		return true;
 	}
 	RenderResult Render(const EvaluatedScene& Scene, const RenderSettings& Settings)
@@ -145,20 +146,12 @@ public:
 			   AnimationBuffer.Id));
 
 			if (ShaderTextureUsage[Shader])
-			{
-				GL_CHECK(glActiveTexture(GL_TEXTURE0 + IRenderBackend::TextureBinding));
-				
-				GL_CHECK(glBindTexture(GL_TEXTURE_2D, Texture));
-				
+			{				
+				GL_CHECK(glBindTextureUnit(0, Texture));
 				GL_CHECK(glUniform1i(IRenderBackend::TextureBinding, 0)); 
 			}
 
 			GL_CHECK(glDrawElements(GL_TRIANGLES, IndexBuffer.Size / (sizeof(uint32_t)), GL_UNSIGNED_INT, 0));
-
-			if (ShaderTextureUsage[Shader])
-			{
-				GL_CHECK(glBindTexture(GL_TEXTURE_2D, 0));
-			}
 			
 			GL_CHECK(glBindVertexArray(0));
 			GL_CHECK(glBindBufferBase(GL_UNIFORM_BUFFER, IRenderBackend::SceneDataBinding, 0));
@@ -313,6 +306,7 @@ public:
     		}
 		}
 
+		Shaders.insert({Id, Program});
 		ShaderTextureUsage.insert({Program, bHasTexture});
 		return Program;
 	}
@@ -362,16 +356,16 @@ public:
 
 		switch (Format)
 		{
-		case 1:
+		case GL_R8:
 			Format = GL_RED;
 			break;
-		case 2:
+		case GL_RG8:
 			Format = GL_RG;
 			break;
-		case 3:
+		case GL_RGB8:
 			Format = GL_RGB;
 			break;
-		case 4:
+		case GL_RGBA8:
 			Format = GL_RGBA;
 			break;
 		}
@@ -387,10 +381,17 @@ public:
 			Texture->pBuffer.get()
 		));
 
+		
+		Textures.insert({Id, NewTex});
 		return NewTex;
 	}
 	GLBuffer AquireTransformBuffer(const std::vector<EvaluatedModel> Models)
 	{
+		if (Models.empty())
+		{
+			return {0,0, true};
+		}
+		
 		GLBuffer Buffer = AquireDynamicBuffer(sizeof(glm::mat4)*Models.size(), false);
 
 
@@ -408,9 +409,14 @@ public:
 	}
 	GLBuffer AquireAnimationBuffer(const std::vector<glm::mat4> Matrices)
 	{
+		if (Matrices.empty())
+		{
+			return {0,0, true};
+		}
+		
 		auto const BufferSize = sizeof(glm::mat4)*Matrices.size();
 		GLBuffer Buffer = AquireDynamicBuffer(BufferSize, true);
-		glNamedBufferSubData(Buffer.Id, 0, BufferSize, Matrices.data());
+		GL_CHECK(glNamedBufferSubData(Buffer.Id, 0, BufferSize, Matrices.data()));
 
 		return Buffer;
 	}

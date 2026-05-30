@@ -8,6 +8,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/trigonometric.hpp>
 #include <iostream>
+#include <optional>
 
 std::pair<glm::mat4, glm::mat4> CalculateCameraProjection(const Camera& CameraData)
 {
@@ -43,7 +44,7 @@ EvaluatedSkeleton EvaluateAnimation(const SkeletonAsset& Skeleton, const Animati
 	return Evaluation;
 }
 
-EvaluatedModel EvaluateModel(const ModelInstance& Model, float Time)
+std::optional<EvaluatedModel> EvaluateModel(const ModelInstance& Model, float Time)
 {
 	EvaluatedModel Evaluation;
 	Evaluation.MeshId = Model.MeshId;
@@ -70,8 +71,8 @@ EvaluatedModel EvaluateModel(const ModelInstance& Model, float Time)
 
 		if (!Animation)
 		{
-			std::cout << "Failed to Evaluate Mesh " << Mesh->Name << " Animation, it is not valid" << std::endl;
-			return {};
+			Evaluation.Skeleton = {};
+			return Evaluation;
 		}
 		
 		Evaluation.Skeleton = EvaluateAnimation(Mesh->Skeleton, *Animation, Time);
@@ -95,7 +96,12 @@ EvaluatedScene EvaluateScene(const SceneDescription& Scene)
 	//Evaluate Models
 	for (auto& Model : Scene.Models)
 	{
-		Evaluation.Models.push_back(EvaluateModel(Model, Scene.TimeStamp));
+		auto Eval = EvaluateModel(Model, Scene.TimeStamp);
+
+		if (Eval)
+		{
+			Evaluation.Models.push_back(*Eval);
+		}
 	}
 	
 	return Evaluation;

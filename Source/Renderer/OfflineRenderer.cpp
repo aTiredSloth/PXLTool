@@ -58,7 +58,12 @@ namespace OfflineRenderer
 	std::promise<ImageResource> DispatchRender(const SceneDescription& Scene, const RenderSettings& Settings)
 	{
 		std::promise<ImageResource> Promise;
-
+		if (Settings.Width == 0 || Settings.Height == 0)
+		{
+			Promise.set_value(ImageResource(nullptr, nullptr, nullptr));
+			return Promise;
+		}
+		
 		std::thread NewThread([&Promise, &Scene, &Settings]()
 		{
 			EvaluatedScene Evaluation = EvaluateScene(Scene);

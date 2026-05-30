@@ -21,8 +21,6 @@ layout (std430, binding = 2) buffer Animation
 	mat4 Matrices[];
 };
 
-layout (binding = 3) uniform sampler2D Texture;
-
 out vec2 TexCoord;
 
 void main()
@@ -32,13 +30,15 @@ void main()
 }
 #else
 
+layout (location = 3) uniform sampler2D Texture;
+
 in vec2 TexCoord;
 layout(location = 0) out vec4 FinalColor;
 layout(location = 1) out vec4 NormalColor;
 
 void main()
 {
-	FinalColor = vec4(1,1,1,1);
+	FinalColor = texture(Texture, TexCoord);
 	NormalColor = vec4(0,0,0, 0);
 }
 #endif

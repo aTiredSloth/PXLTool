@@ -77,7 +77,7 @@ namespace UI
 	int Start(SQLite::Database& DB)
 	{
 		std::vector<ModelInstance> Models;
-		DB.exec("CREATE TABLE IF NOT EXISTS SCENES ( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT)");
+		DB.exec("CREATE TABLE IF NOT EXISTS SCENES ( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT, Width INTEGER, Height INTEGER)");
 		
 		RegisterAPI(DB);
 		
@@ -147,16 +147,19 @@ namespace UI
 				uint32_t i = 0;
 				while (Query.executeStep())
     			{
-        			//( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT)
+        			//( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT, int Width, int Height)
         			const char* Name = Query.getColumn(0);
         			double Time = Query.getColumn(1);
         			const char* CameraData = Query.getColumn(2);
         			const char* Models = Query.getColumn(3);
-
+           		int Width = Query.getColumn(4);
+           		int Height = Query.getColumn(5);
            		Json[i]["Name"] = Name;
              	Json[i]["Time"] = Time;
              	Json[i]["Camera"] = crow::json::load(CameraData ? CameraData : CameraDefault.c_str());
              	Json[i]["Models"] = crow::json::load(Models ? Models : "[]");
+             	Json[i]["Width"] = Width;
+             	Json[i]["Height"] = Height;
               	i += 1;
     			}
 			}
@@ -172,8 +175,8 @@ namespace UI
 		CROW_ROUTE(App, "/api/newscene/<string>")
 		([&DB](const std::string& Name)
 		{
-			std::string const Command = "INSERT INTO SCENES VALUES ('" + Name + "', 0, '" + CameraDefault + "', '[]')";
-			//( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT)
+			std::string const Command = "INSERT INTO SCENES VALUES ('" + Name + "', 0, '" + CameraDefault + "', '[]', 0, 0)";
+			//( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT, int Width, int Height)
 			DB.exec(Command.c_str());
 
 			return Name;
@@ -196,15 +199,19 @@ namespace UI
 			std::string const Command = "SELECT * FROM SCENES WHERE Name = \"" + Name + "\"";
 			
 			SQLite::Statement Query(DB, Command);
-
+			uint32_t Width = 512;
+			uint32_t Height = 512;
+			
 			SceneDescription Desc;
 			while (Query.executeStep())
     		{
-        		//( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT)
+        		//( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT, int Width, int Height)
         		double Time = Query.getColumn(1);
         		const char* CameraData = Query.getColumn(2);
         		const char* Models = Query.getColumn(3);
-
+         	Width = Query.getColumn(4);
+          	Height = Query.getColumn(5);
+           
           	Desc.TimeStamp = Time;
            	crow::json::rvalue CameraJson = crow::json::load(CameraData);
             Desc.CameraData.Location.x = CameraJson["Location"]["x"].d();
@@ -256,13 +263,19 @@ namespace UI
 				}
     		}
 			
-			auto Promise = OfflineRenderer::DispatchRender(Desc, {512, 512});
+			auto Promise = OfflineRenderer::DispatchRender(Desc, {Width, Height});
 
 			auto Future = Promise.get_future();
 			
 			Future.wait();
 
 			auto [Color, Normal, Depth] = Future.get();
+
+			if (!Color || !Normal || !Depth)
+			{
+				return crow::response(500);
+			}
+			
 			std::vector<char> ColorBytes(Color->GetSize(), 0);
 			Color->Copy((char*)ColorBytes.data());
 			std::vector<char> NormalBytes(Normal->GetSize(), 0);
@@ -288,56 +301,14 @@ namespace UI
 			crow::json::wvalue CameraJson = Json["Camera"];
 			crow::json::wvalue ModelsJson = Json["Models"];
 			
-			//( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT)
-			std::string const Command = "UPDATE SCENES SET Time = " + std::to_string(Json["Time"].d()) + 
-			", Camera = '" + CameraJson.dump() + "', Models = '" + ModelsJson.dump() + "' WHERE Name = '" + Name + "'";
-			
-			SQLite::Statement Query(DB, Command);
-
-			Query.exec();
-
-			return 200;
-		});
-		//set Models
-		CROW_ROUTE(App, "/api/scene/<string>/setmodels")
-		([&DB](const crow::request& req, const std::string& Name)
-		{
-			crow::json::rvalue Json = crow::json::load(req.body);
-			
-			crow::json::wvalue ModelsJson = Json["Models"];
-			
-			//( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT)
-			std::string const Command = "UPDATE SCENES SET Models = '" + ModelsJson.dump() + "' WHERE Name = '" + Name + "'";
-			
-			SQLite::Statement Query(DB, Command);
-
-			Query.exec();
-
-			return 200;
-		});
-		//set Camera
-		CROW_ROUTE(App, "/api/scene/<string>/setcamera")
-		([&DB]( const crow::request& req, const std::string& Name)
-		{
-			crow::json::rvalue Json = crow::json::load(req.body);
-			
-			crow::json::wvalue CameraJson = Json["Camera"];
-			
-			//( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT)
-			std::string const Command = "UPDATE SCENES SET Camera = '" + CameraJson.dump() + "' WHERE Name = '" + Name + "'";
-			
-			SQLite::Statement Query(DB, Command);
-
-			Query.exec();
-
-			return 200;
-		});
-			//set Time
-		CROW_ROUTE(App, "/api/scene/<string>/settime")
-		([&DB](const crow::request& req, const std::string& Name)
-		{
-			//( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT)
-			std::string const Command = "UPDATE SCENES SET Time = " + req.body + " WHERE Name = '" + Name + "'";
+			//( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT, int Width, int Height)
+			std::string const Command =
+    		"UPDATE SCENES SET Time = " + std::to_string(Json["Time"].d()) +
+    		", Camera = '" + CameraJson.dump() +
+    		"', Models = '" + ModelsJson.dump() +
+    		"', Width = " + std::to_string(Json["Width"].i()) +
+    		", Height = " + std::to_string(Json["Height"].i()) +
+    		" WHERE Name = '" + Name + "'";
 			
 			SQLite::Statement Query(DB, Command);
 
@@ -432,7 +403,7 @@ namespace UI
 			{
 				AssetManager::LoadShader(FileName, Stream);
 			}
-			else if (Extension == ".fbx" || Extension == ".obj" || Extension == ".gtlf")
+			else if (Extension == ".fbx" || Extension == ".obj" || Extension == ".gltf")
 			{
 				AssetManager::LoadScene(Extension.substr(1), Stream);
 			}

@@ -71,7 +71,6 @@
       return;
     }
 </script>
-
 <div class="scene-editor">
  
 	<!-- ── Left: Properties ── -->
@@ -102,8 +101,6 @@
 				<span class="sh-icon">◎</span> CAMERA
 			</div>
 			<div class="section-body">
- 
-				<!-- Transform -->
 				<div class="prop-group">
 					<div class="prop-label">Location</div>
 					<Vector3Edit bind:vector={Id.Camera.Location} />
@@ -115,24 +112,13 @@
  
 				<div class="divider"></div>
  
-				<!-- Projection toggle -->
 				<div class="prop-row">
 					<span class="prop-key">Projection</span>
 					<div class="toggle-row">
-						<button
-							class="proj-btn"
-							class:active={!Id.Camera.IsOrtho}
-							onclick={() => Id.Camera.IsOrtho = false}
-						>PERSP</button>
-						<button
-							class="proj-btn"
-							class:active={Id.Camera.IsOrtho}
-							onclick={() => Id.Camera.IsOrtho = true}
-						>ORTHO</button>
+						<button class="proj-btn" class:active={!Id.Camera.IsOrtho} onclick={() => Id.Camera.IsOrtho = false}>PERSP</button>
+						<button class="proj-btn" class:active={Id.Camera.IsOrtho}  onclick={() => Id.Camera.IsOrtho = true}>ORTHO</button>
 					</div>
 				</div>
- 
-				<!-- Shared fields -->
 				<div class="prop-row">
 					<span class="prop-key">Near</span>
 					<input class="num-input" type="number" bind:value={Id.Camera.Near} step="0.01" />
@@ -145,16 +131,12 @@
 					<span class="prop-key">Aspect</span>
 					<input class="num-input" type="number" bind:value={Id.Camera.Aspect} step="0.01" />
 				</div>
- 
-				<!-- Perspective-only -->
 				{#if !Id.Camera.IsOrtho}
 					<div class="prop-row">
 						<span class="prop-key">FOV</span>
 						<input class="num-input" type="number" bind:value={Id.Camera.FOV} step="1" min="1" max="179" />
 					</div>
 				{/if}
- 
-				<!-- Ortho-only -->
 				{#if Id.Camera.IsOrtho}
 					<div class="subsection-label">ORTHO BOUNDS</div>
 					<div class="prop-row">
@@ -174,7 +156,6 @@
 						<input class="num-input" type="number" bind:value={Id.Camera.OrthoBottom} step="0.1" />
 					</div>
 				{/if}
- 
 			</div>
 		</div>
  
@@ -190,7 +171,6 @@
 						<div class="model-card-top">
 							<span class="mc-label">MODEL {i + 1}</span>
 						</div>
- 
 						<div class="prop-row">
 							<span class="prop-key">Mesh</span>
 							<Dropdown Options={GetMeshes} bind:CurrentFilter={Model.MeshId} />
@@ -207,9 +187,7 @@
 							<span class="prop-key">Shader</span>
 							<Dropdown Options={GetShaders} bind:CurrentFilter={Model.ShaderId} />
 						</div>
- 
 						<div class="divider"></div>
- 
 						<div class="prop-group">
 							<div class="prop-label">Location</div>
 							<Vector3Edit bind:vector={Model.Location} />
@@ -224,12 +202,28 @@
 						</div>
 					</div>
 				{/each}
- 
 				{#if Id.Models.length === 0}
 					<div class="models-empty">
 						<span>No models — click ADD MESH above</span>
 					</div>
 				{/if}
+			</div>
+		</div>
+ 
+		<!-- Output -->
+		<div class="section">
+			<div class="section-hdr">
+				<span class="sh-icon">⬛</span> OUTPUT
+			</div>
+			<div class="section-body">
+				<div class="prop-row">
+					<span class="prop-key">Width</span>
+					<input class="num-input" type="number" bind:value={Id.Width} step="1" min="1" />
+				</div>
+				<div class="prop-row">
+					<span class="prop-key">Height</span>
+					<input class="num-input" type="number" bind:value={Id.Height} step="1" min="1" />
+				</div>
 			</div>
 		</div>
  
@@ -262,7 +256,6 @@
 		overflow: hidden;
 	}
  
-	/* ── Properties panel ── */
 	.props {
 		width: 284px;
 		background: var(--bg-panel);
@@ -276,7 +269,6 @@
 	.props::-webkit-scrollbar          { width: 3px; }
 	.props::-webkit-scrollbar-thumb    { background: var(--border-hi); }
  
-	/* ── Section ── */
 	.section { border-bottom: 1px solid var(--border); }
 	.section-models { flex: 1; }
  
@@ -316,7 +308,6 @@
 		margin-top: 2px;
 	}
  
-	/* ── File import ── */
 	.file-zone { position: relative; }
  
 	.file-hidden {
@@ -343,10 +334,9 @@
 		font-family: 'Chakra Petch', sans-serif;
 	}
  
-	.file-label:hover  { border-color: var(--accent); color: var(--accent); }
-	.fl-icon           { font-size: 15px; }
+	.file-label:hover { border-color: var(--accent); color: var(--accent); }
+	.fl-icon          { font-size: 15px; }
  
-	/* ── Buttons ── */
 	.btn {
 		border: none;
 		padding: 5px 10px;
@@ -387,7 +377,6 @@
  
 	.btn-inline:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
  
-	/* ── Projection toggle ── */
 	.toggle-row {
 		display: flex;
 		gap: 2px;
@@ -408,10 +397,9 @@
 		transition: all 0.15s;
 	}
  
-	.proj-btn:hover          { border-color: var(--accent); color: var(--text); }
-	.proj-btn.active         { background: var(--accent); border-color: var(--accent); color: #fff; }
+	.proj-btn:hover       { border-color: var(--accent); color: var(--text); }
+	.proj-btn.active      { background: var(--accent); border-color: var(--accent); color: #fff; }
  
-	/* ── Number input ── */
 	.num-input {
 		flex: 1;
 		background: var(--bg-base);
@@ -427,12 +415,10 @@
 		text-align: right;
 	}
  
-	.num-input:focus         { border-color: var(--accent); }
- 
+	.num-input:focus { border-color: var(--accent); }
 	.num-input::-webkit-inner-spin-button,
 	.num-input::-webkit-outer-spin-button { opacity: 0.25; }
  
-	/* ── Property layout ── */
 	.prop-group {
 		display: flex;
 		flex-direction: column;
@@ -460,7 +446,6 @@
 		min-width: 64px;
 	}
  
-	/* ── Model cards ── */
 	.models-list { gap: 8px; }
  
 	.model-card {
@@ -502,7 +487,6 @@
 		line-height: 1.7;
 	}
  
-	/* ── Render bar ── */
 	.render-bar {
 		padding: 10px 8px;
 		background: #0e0e0e;
@@ -534,7 +518,6 @@
 		box-shadow: 0 0 16px var(--accent-glow), 0 0 32px rgba(224,123,57,0.15);
 	}
  
-	/* ── Preview pane ── */
 	.preview-pane {
 		flex: 1;
 		display: flex;

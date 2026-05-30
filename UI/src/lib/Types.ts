@@ -38,4 +38,6 @@ type Scene =
 	Time: number;
 	Camera: CameraData;
 	Models: Model[];
+	Width: number;
+	Height: number;	
 };

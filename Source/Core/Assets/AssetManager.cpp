@@ -7,6 +7,7 @@
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <cstring>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -146,7 +147,7 @@ namespace AssetManager
 
 		unsigned Flags = aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenNormals;
 		const aiScene* pImportedScene = Importer.ReadFileFromMemory(Binary.data(), Binary.size(), Flags, Extension.c_str());
-
+		
 		for (size_t i = 0; i < pImportedScene->mNumMeshes; ++i)
 		{
 			ImportMesh(pImportedScene->mMeshes[i]);
@@ -285,7 +286,7 @@ namespace AssetManager
 		
 		std::shared_ptr<char[]> pImageBuffer = std::shared_ptr<char[]>(new char[Size]);
 
-
+		std::memcpy(pImageBuffer.get(), pImageBytes, Size);
 		TextureAsset NewTexture;
 		NewTexture.Width = Width;
 		NewTexture.Height = Height;
