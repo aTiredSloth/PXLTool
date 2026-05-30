@@ -1,6 +1,6 @@
 #ifndef ASSETID_HPP
 #define ASSETID_HPP
 
-using AssetID = long long unsigned;
+using AssetID = unsigned;
 
 #endif

@@ -8,6 +8,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
 
+set(CMAKE_BUILD_TYPE "Debug")
+
 include_directories("./Source")
 include_directories("./Libs")
 
@@ -18,7 +20,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 file(GLOB_RECURSE SOURCE_FILES "Source/*.c" "Source/*.cpp")
 file(GLOB_RECURSE HEADER_FILES "Source/*.h" "Source/*.hpp")
 
-set(PROJECT_FILES ${SOURCE_FILES} ${HEADER_FILES})
+set(PROJECT_FILES ${SOURCE_FILES} ${HEADER_FILES} "Libs/stbi/stbi_image.h" "Libs/stbi/stbi_image_write.h")
 
 #ImGui
 file(GLOB IMGUI_LIB "Libs/imgui/imgui.h" "Libs/imgui/imgui.cpp" "Libs/imgui/imcongif.h" "Libs/imgui/imgui_demo.cpp" "Libs/imgui/imgui_draw.cpp"

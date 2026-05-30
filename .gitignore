@@ -16,3 +16,4 @@ CMakeUserPresets.json
 /Old
 *.dmp
 /UI/.vscode
+savedata.db3

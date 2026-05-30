@@ -1,44 +1,21 @@
 #ifndef IMAGERESOURCE_HPP
 #define IMAGERESOURCE_HPP
-
 #include <cstring>
+#include <vector>
+
 class Image
 {
 public:
-	Image(char* pBuffer, size_t Size) :
-	pBuffer(pBuffer),
-	Size(Size)
-	{
-		
-	}
+	Image(char* pBuffer, size_t Width, size_t Height, size_t ComponentCount);
 
 	Image(const Image&) = delete;
-	Image(Image&& Temp) :
-	pBuffer(Temp.pBuffer),
-	Size(Temp.Size)
-	{
-		Temp.pBuffer = nullptr;
-	}
-	~Image()
-	{
-		if (pBuffer)
-		{
-			delete[] pBuffer;
-		}
-	}
+	Image(Image&& Temp);
+	~Image() = default;
 	
-	size_t GetSize() const
-	{
-		return Size;
-	}
-	
-	void Copy(char* pDestination, size_t Size)
-	{
-		std::memcpy(pDestination, pBuffer, Size);
-	}
+	size_t GetSize() const;
+	void Copy(char* pDestination);
 private:
-	char* pBuffer;
-	size_t Size;
+	std::vector<uint8_t> Buffer;
 };
 
 #endif

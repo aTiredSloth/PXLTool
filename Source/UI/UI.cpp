@@ -8,13 +8,13 @@
 #include "crow/json.h"
 #include <Crow/include/crow.h>
 #include <SQLiteCpp/Statement.h>
-#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <glm/fwd.hpp>
 #include <glm/gtc/constants.hpp>
 #include <glm/trigonometric.hpp>
 #include <saucer/smartview.hpp>
+#include <sstream>
 #include <string>
 
 constexpr auto const Port = 4081;
@@ -22,6 +22,42 @@ std::future<void> Server;
 crow::SimpleApp App;
 namespace UI
 {
+	inline static const std::string Base64Chars =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		"abcdefghijklmnopqrstuvwxyz"
+		"0123456789+/";
+
+	std::string Base64Encode(const std::vector<char>& Data)
+	{
+		std::string Out;
+		
+		int Val = 0;
+		int ValB = -6;
+		
+		for (unsigned char C : Data)
+		{
+			Val = (Val << 8) + C;
+			ValB += 8;
+			
+			while (ValB >= 0)
+			{
+				Out.push_back(Base64Chars[(Val >> ValB) & 0x3F]);
+				ValB -= 6;
+			}
+		}
+		
+		if (ValB > -6)
+		{
+			Out.push_back(Base64Chars[((Val << 8) >> (ValB + 8)) & 0x3F]);
+		}
+		
+		while (Out.size() % 4)
+		{
+			Out.push_back('=');
+		}
+		
+		return Out;
+	}
 
 	void RegisterAPI(SQLite::Database& pDB);
 	coco::stray start(saucer::application* app)
@@ -40,8 +76,6 @@ namespace UI
 
 	int Start(SQLite::Database& DB)
 	{
-		float TimeStamp;
-		Camera CameraData;
 		std::vector<ModelInstance> Models;
 		DB.exec("CREATE TABLE IF NOT EXISTS SCENES ( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT)");
 		
@@ -85,7 +119,21 @@ namespace UI
 				
 			res.end(); 
 		});
-
+		
+		static std::string const CameraDefault = R"({
+    "IsOrtho": false,
+    "OrthoLeft": -64,
+    "OrthoRight": 64,
+    "OrthoTop": 64,
+    "OrthoBottom": -64,
+    "Aspect": 1.7778,
+    "Near": 0.01,
+    "Far": 1000.0,
+    "FOV": 90,
+    "Location": { "x": 0, "y": 0, "z": 0 },
+    "Rotation": { "x": 0, "y": 0, "z": 0 }
+})";
+		
 		//get all scene
 		CROW_ROUTE(App, "/api/scenes")
 		([&DB]()
@@ -107,8 +155,8 @@ namespace UI
 
            		Json[i]["Name"] = Name;
              	Json[i]["Time"] = Time;
-             	Json[i]["Camera"] = crow::json::load(CameraData);
-             	Json[i]["Models"] = crow::json::load(Models);
+             	Json[i]["Camera"] = crow::json::load(CameraData ? CameraData : CameraDefault.c_str());
+             	Json[i]["Models"] = crow::json::load(Models ? Models : "[]");
               	i += 1;
     			}
 			}
@@ -124,7 +172,7 @@ namespace UI
 		CROW_ROUTE(App, "/api/newscene/<string>")
 		([&DB](const std::string& Name)
 		{
-			std::string const Command = "INSERT INTO SCENES VALUES (\"" + Name + "\", 0, \"{}\", \"{}\")";
+			std::string const Command = "INSERT INTO SCENES VALUES ('" + Name + "', 0, '" + CameraDefault + "', '[]')";
 			//( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT)
 			DB.exec(Command.c_str());
 
@@ -138,7 +186,7 @@ namespace UI
 			std::string const Command = "DELETE FROM SCENES WHERE Name = \"" + Name + "\"";
 			DB.exec(Command.c_str());
 
-			return 1;
+			return 200;
 		});
 		
 		//render scene
@@ -162,7 +210,7 @@ namespace UI
             Desc.CameraData.Location.x = CameraJson["Location"]["x"].d();
             Desc.CameraData.Location.y = CameraJson["Location"]["y"].d();
             Desc.CameraData.Location.z = CameraJson["Location"]["z"].d();
-
+            
             glm::vec3 Euler;
             Euler.x = glm::radians(CameraJson["Rotation"]["x"].d());
             Euler.y = glm::radians(CameraJson["Rotation"]["y"].d());
@@ -170,6 +218,16 @@ namespace UI
             
             Desc.CameraData.Rotation = glm::quat(Euler);
 
+            Desc.CameraData.bIsOrtho = CameraJson["IsOrtho"].b();
+            Desc.CameraData.OrthoLeft = CameraJson["OrthoLeft"].d();
+            Desc.CameraData.OrthoRight = CameraJson["OrthoRight"].d();
+            Desc.CameraData.OrthoTop = CameraJson["OrthoTop"].d();
+            Desc.CameraData.OrthoBottom = CameraJson["OrthoBottom"].d();
+            Desc.CameraData.Aspect = CameraJson["Aspect"].d();
+            Desc.CameraData.Near = CameraJson["Near"].d();
+            Desc.CameraData.Far = CameraJson["Far"].d();
+            Desc.CameraData.FOV = CameraJson["FOV"].d();
+		
            	crow::json::rvalue ModelsJson = crow::json::load(Models);
 
             for (auto& Model : ModelsJson)
@@ -177,6 +235,7 @@ namespace UI
 					AssetID MeshId = Model["MeshId"].u();
 					AssetID AnimationId = Model["AnimationId"].u();
 					AssetID ShaderId = Model["ShaderId"].u();
+					AssetID TextureId = Model["TextureId"].u();
 
 					Transform Transformation;
 					Transformation.Location.x = Model["Location"]["x"].d();
@@ -193,22 +252,35 @@ namespace UI
 					Transformation.Scale.y = Model["Scale"]["y"].d();
 					Transformation.Scale.z = Model["Scale"]["z"].d();
 
-					Desc.Models.push_back({MeshId, AnimationId, ShaderId, Transformation});
+					Desc.Models.push_back({MeshId, AnimationId, ShaderId, TextureId, Transformation});
 				}
     		}
 			
-			auto Promise = OfflineRenderer::DispatchRender(Desc, {128, 128});
+			auto Promise = OfflineRenderer::DispatchRender(Desc, {512, 512});
 
 			auto Future = Promise.get_future();
 			
 			Future.wait();
 
-			return 1;
+			auto [Color, Normal, Depth] = Future.get();
+			std::vector<char> ColorBytes(Color->GetSize(), 0);
+			Color->Copy((char*)ColorBytes.data());
+			std::vector<char> NormalBytes(Normal->GetSize(), 0);
+			Normal->Copy((char*)NormalBytes.data());
+			std::vector<char> DepthBytes(Depth->GetSize(), 0);
+			Depth->Copy((char*)DepthBytes.data());
+			
+			crow::json::wvalue Json;
+
+			Json["color"] = Base64Encode(ColorBytes);
+			Json["normal"] = Base64Encode(NormalBytes);
+			Json["depth"] = Base64Encode(DepthBytes);
+
+			return crow::response(Json);
 		});
 		
 		//edit scene
-		//
-		CROW_ROUTE(App, "/api/scene/<string>/update")
+		CROW_ROUTE(App, "/api/scene/<string>/update").methods(crow::HTTPMethod::Post)
 		([&DB](const crow::request& req, const std::string& Name)
 		{
 			crow::json::rvalue Json = crow::json::load(req.body);
@@ -224,9 +296,9 @@ namespace UI
 
 			Query.exec();
 
-			return 1;
+			return 200;
 		});
-			//set Models
+		//set Models
 		CROW_ROUTE(App, "/api/scene/<string>/setmodels")
 		([&DB](const crow::request& req, const std::string& Name)
 		{
@@ -241,7 +313,7 @@ namespace UI
 
 			Query.exec();
 
-			return 1;
+			return 200;
 		});
 		//set Camera
 		CROW_ROUTE(App, "/api/scene/<string>/setcamera")
@@ -258,7 +330,7 @@ namespace UI
 
 			Query.exec();
 
-			return 1;
+			return 200;
 		});
 			//set Time
 		CROW_ROUTE(App, "/api/scene/<string>/settime")
@@ -271,11 +343,11 @@ namespace UI
 
 			Query.exec();
 
-			return 1;
+			return 200;
 		});
 		//get all meshes
 		CROW_ROUTE(App, "/api/meshes")
-		([&DB]()
+		([]()
 		{
 			crow::json::wvalue Json;
 
@@ -290,7 +362,7 @@ namespace UI
 		});
 		//get all animations
 		CROW_ROUTE(App, "/api/animations")
-		([&DB]()
+		([]()
 		{
 			crow::json::wvalue Json;
 
@@ -305,7 +377,7 @@ namespace UI
 		});
 		//get all shaders
 		CROW_ROUTE(App, "/api/shaders")
-		([&DB]()
+		([]()
 		{
 			crow::json::wvalue Json;
 
@@ -318,27 +390,58 @@ namespace UI
 
 			return Json;
 		});
-		//Load
-		CROW_ROUTE(App, "/api/load/<string>")
-		([&DB](const std::string& FileName)
+		//get all textures
+		CROW_ROUTE(App, "/api/textures")
+		([]()
 		{
-			if (!std::filesystem::exists(FileName))
+			crow::json::wvalue Json;
+
+			uint64_t i = 0;
+			for (auto& Texture : AssetManager::GetAllTextureIds())
 			{
-				return 1;
+				Json[i] = Texture;
+				i += 1;
 			}
 
-			std::filesystem::path Path = FileName;
+			return Json;
+		});
+		//Load
+		CROW_ROUTE(App, "/api/load").methods(crow::HTTPMethod::Post)
+		([](const crow::request& req)
+		{
+   		crow::multipart::message Message(req);
+
+        	auto Part = Message.get_part_by_name("file");
+         auto Header = Part.get_header_object("Content-Disposition");
+
+        	std::string FileName = Header.params["filename"];
+
+         auto DotPos = FileName.find_last_of('.');
+ 
+         if (DotPos == std::string::npos)
+         {
+             return crow::response(400, "Missing extension");
+         }
+         
+			auto Extension = FileName.substr(DotPos);
+
+         std::stringstream Stream;
+         Stream.write(Part.body.c_str(), Part.body.size());
+         
+			if (Extension == ".glsl")
+			{
+				AssetManager::LoadShader(FileName, Stream);
+			}
+			else if (Extension == ".fbx" || Extension == ".obj" || Extension == ".gtlf")
+			{
+				AssetManager::LoadScene(Extension.substr(1), Stream);
+			}
+			else if (Extension == ".png")
+			{
+				AssetManager::LoadTexture(Stream);
+			}
 			
-			if (Path.extension() == ".glsl")
-			{
-				AssetManager::LoadShader(Path.string().c_str());
-			}
-			else if (Path.extension() == ".fbx" || Path.extension() == ".obj" || Path.extension() == ".gtlf")
-			{
-				AssetManager::LoadScene(Path.string().c_str());
-			}
-
-			return 1;
+        	return crow::response(200, "File uploaded");
 		});
 	}
 }

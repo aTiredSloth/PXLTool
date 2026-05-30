@@ -13,6 +13,7 @@ struct EvaluatedModel
 {
 	AssetID MeshId;
 	AssetID ShaderId;
+	AssetID TextureId;
 	EvaluatedSkeleton Skeleton;
 	glm::mat4 Transformation;
 };

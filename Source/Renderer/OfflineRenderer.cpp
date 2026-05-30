@@ -7,6 +7,7 @@
 #include <iostream>
 #include <memory>
 #include <GLFW/glfw3.h>
+#include <mutex>
 
 namespace OfflineRenderer
 {
@@ -21,7 +22,12 @@ namespace OfflineRenderer
 			std::cout << "Failed to Initalize GLFW: " << pError << std::endl;
 			return false;
 		}
-		
+
+		glfwSetErrorCallback([](int error, const char* description)
+			{
+				fprintf(stderr, "GLFW error %d: %s\n", error, description);
+			}
+		);
 		switch (Backend)
 		{
       case RenderBackend::OpenGL:
@@ -53,12 +59,14 @@ namespace OfflineRenderer
 	{
 		std::promise<ImageResource> Promise;
 
+		std::thread NewThread([&Promise, &Scene, &Settings]()
 		{
 			EvaluatedScene Evaluation = EvaluateScene(Scene);
 			
 			Promise.set_value(pBackend->Render(Evaluation, Settings));
-		}
+		});
 		
-		return std::move(Promise);
+		NewThread.join();
+		return Promise;
 	}
 }

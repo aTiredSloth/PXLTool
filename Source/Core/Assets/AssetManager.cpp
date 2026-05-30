@@ -7,15 +7,18 @@
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
-#include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <unordered_map>
 #include<assimp/quaternion.h>
 #include<assimp/vector3.h>
 #include<assimp/matrix4x4.h>
+#include "Core/Assets/TextureAsset.hpp"
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 #include "glm/gtc/quaternion.hpp"
 
 namespace AssetManager
@@ -28,6 +31,7 @@ namespace AssetManager
 	std::unordered_map<AssetID, MeshAsset> Meshes;
 	std::unordered_map<AssetID, AnimationAsset> Animations;
 	std::unordered_map<AssetID, ShaderAsset> Shaders;
+	std::unordered_map<AssetID, TextureAsset> Textures;
 
 	namespace GLMAssimp
 	{
@@ -62,9 +66,9 @@ namespace AssetManager
 
 	std::vector<AssetID> GetAllMeshIds()
 	{
-		std::vector<AssetID> Array(0, Meshes.size());
+		std::vector<AssetID> Array(Meshes.size(), 0);
 
-		for (size_t i = 0; i < Array.size(); ++i)
+		for (size_t i = 0; i < Meshes.size(); ++i)
 		{
 			Array[i] = std::next(Meshes.begin(), i)->first;
 		}
@@ -83,7 +87,7 @@ namespace AssetManager
 
 	std::vector<AssetID> GetAllAnimationIds()
 	{
-		std::vector<AssetID> Array(0, Animations.size());
+		std::vector<AssetID> Array(Animations.size(), 0);
 
 		for (size_t i = 0; i < Array.size(); ++i)
 		{
@@ -104,7 +108,7 @@ namespace AssetManager
 
 	std::vector<AssetID> GetAllShaderIds()
 	{
-		std::vector<AssetID> Array(0, Shaders.size());
+		std::vector<AssetID> Array(Shaders.size(), 0);
 
 		for (size_t i = 0; i < Array.size(); ++i)
 		{
@@ -123,35 +127,26 @@ namespace AssetManager
 		return std::optional<ShaderAsset>();
 	}
 
-	void LoadShader(const char* pFileName)
+	void LoadShader(const std::string& Name, std::istream& Stream)
 	{
-		std::ifstream File(pFileName);
-
-		if (!File)
-		{
-			std::cout << "Failed to Open Shader file " << pFileName << std::endl;
-			return;
-		}
-
 		std::stringstream StringStream;
-		StringStream << File.rdbuf();
-		File.close();
-
+		StringStream << Stream.rdbuf();
 
 		ShaderAsset NewShader;
-		NewShader.Name = pFileName;
+		NewShader.Name = Name;
 		NewShader.SourceCode = StringStream.str();
 		Shaders.insert({GenerateId(), std::move(NewShader)});
 	}
 
-	void LoadScene(const char* pFileName)
+	void LoadScene(const std::string& Extension, std::istream& Stream)
 	{
+		std::vector<uint8_t> const Binary = std::vector<uint8_t>(std::istreambuf_iterator<char>(Stream), std::istreambuf_iterator<char>());
+		
 		Assimp::Importer Importer;
 
 		unsigned Flags = aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenNormals;
-		const aiScene* pImportedScene = Importer.ReadFile(pFileName, Flags);
+		const aiScene* pImportedScene = Importer.ReadFileFromMemory(Binary.data(), Binary.size(), Flags, Extension.c_str());
 
-		
 		for (size_t i = 0; i < pImportedScene->mNumMeshes; ++i)
 		{
 			ImportMesh(pImportedScene->mMeshes[i]);
@@ -277,5 +272,48 @@ namespace AssetManager
 		}
 		
 		return NewAsset;
+	}
+
+	void LoadTexture(std::istream& Stream)
+	{
+		std::vector<uint8_t> const Binary = std::vector<uint8_t>(std::istreambuf_iterator<char>(Stream), std::istreambuf_iterator<char>());
+
+		int Width, Height, ChannelCount;
+		
+		uint8_t* const pImageBytes = stbi_load_from_memory(Binary.data(), Binary.size(), &Width, &Height, &ChannelCount, 4);
+		int const Size = Width*Height*ChannelCount;
+		
+		std::shared_ptr<char[]> pImageBuffer = std::shared_ptr<char[]>(new char[Size]);
+
+
+		TextureAsset NewTexture;
+		NewTexture.Width = Width;
+		NewTexture.Height = Height;
+		NewTexture.ChannelCount = ChannelCount;
+		NewTexture.pBuffer = pImageBuffer;
+		stbi_image_free(pImageBytes);
+
+		Textures.insert({GenerateId(), NewTexture});
+	}
+
+	std::vector<AssetID> GetAllTextureIds()
+	{
+		std::vector<AssetID> Array(Textures.size(), 0);
+
+		for (size_t i = 0; i < Array.size(); ++i)
+		{
+			Array[i] = std::next(Textures.begin(), i)->first;
+		}
+
+		return Array;
+	}
+	std::optional<TextureAsset> GetTexture(AssetID Id)
+	{
+		if (Textures.contains(Id))
+		{
+			return std::optional<TextureAsset>(Textures[Id]);
+		}
+
+		return std::optional<TextureAsset>();
 	}
 }

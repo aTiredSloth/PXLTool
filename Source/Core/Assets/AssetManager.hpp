@@ -4,6 +4,7 @@
 #include "Core/Assets/AssetId.hpp"
 #include "Core/Assets/MeshAsset.hpp"
 #include "Core/Assets/ShaderAsset.hpp"
+#include "Core/Assets/TextureAsset.hpp"
 #include <optional>
 #include <vector>
 
@@ -18,8 +19,12 @@ namespace AssetManager
 	std::vector<AssetID> GetAllShaderIds();
 	std::optional<ShaderAsset> GetShader(AssetID);
 
-	void LoadShader(const char* pFileName);
-	void LoadScene(const char* pFileName);
+	std::vector<AssetID> GetAllTextureIds();
+	std::optional<TextureAsset> GetTexture(AssetID);
+	
+	void LoadShader(const std::string& Name, std::istream& Stream);
+	void LoadScene(const std::string& Extension, std::istream& Stream);
+	void LoadTexture(std::istream& Stream);
 }
 
 #endif

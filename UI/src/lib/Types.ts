@@ -25,6 +25,7 @@ type Model =
 {
 	MeshId: number;
 	AnimationId: number;
+	TextureId: number;
 	ShaderId: number;
 	Location: Vector3;
 	Rotation: Vector3;

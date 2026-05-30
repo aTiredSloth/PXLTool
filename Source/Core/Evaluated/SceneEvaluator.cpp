@@ -6,20 +6,21 @@
 #include "Core/Runtime/ModelInstance.hpp"
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/trigonometric.hpp>
 #include <iostream>
 
 std::pair<glm::mat4, glm::mat4> CalculateCameraProjection(const Camera& CameraData)
 {
-	glm::mat4 const ViewMatrix = glm::lookAt(CameraData.Location, CameraData.Location + (-Camera::Forward * CameraData.Rotation), Camera::Up);
-	glm::mat4 const ProjectionMatrix = glm::ortho<float>
+	glm::mat4 const ViewMatrix = glm::lookAt(CameraData.Location, CameraData.Location + (CameraData.Rotation * -Camera::Forward), Camera::Up);
+	glm::mat4 const ProjectionMatrix = CameraData.bIsOrtho ? glm::ortho<float>
 	(
 		CameraData.OrthoLeft, 
 		CameraData.OrthoRight, 
+		CameraData.OrthoBottom,
 		CameraData.OrthoTop, 
-		CameraData.OrthoBottom, 
 		CameraData.Near, 
 		CameraData.Far
-	);
+	) : glm::perspective(glm::radians(CameraData.FOV), CameraData.Aspect, CameraData.Near, CameraData.Far);
 
 	return {ViewMatrix, ProjectionMatrix};
 }
@@ -39,7 +40,7 @@ EvaluatedSkeleton EvaluateAnimation(const SkeletonAsset& Skeleton, const Animati
 		Evaluation.Matrices[i] = GetChannelMatrix(Animation, Bones[i], Time);
 	}
 
-	return std::move(Evaluation);
+	return Evaluation;
 }
 
 EvaluatedModel EvaluateModel(const ModelInstance& Model, float Time)
@@ -47,6 +48,7 @@ EvaluatedModel EvaluateModel(const ModelInstance& Model, float Time)
 	EvaluatedModel Evaluation;
 	Evaluation.MeshId = Model.MeshId;
 	Evaluation.ShaderId = Model.ShaderId;
+	Evaluation.TextureId = Model.TextureId;
 	const Transform& ModelTransform = Model.Transformation;
 	
 	glm::mat4 const Translation = glm::translate(glm::mat4(1.0f), ModelTransform.Location);
@@ -75,7 +77,7 @@ EvaluatedModel EvaluateModel(const ModelInstance& Model, float Time)
 		Evaluation.Skeleton = EvaluateAnimation(Mesh->Skeleton, *Animation, Time);
 	}
 	
-	return std::move(Evaluation);
+	return Evaluation;
 }
 
 EvaluatedScene EvaluateScene(const SceneDescription& Scene)

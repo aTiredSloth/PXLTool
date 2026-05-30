@@ -14,6 +14,7 @@ public:
 	static constexpr auto SceneDataBinding = 0u;
 	static constexpr auto ModelDataBinding = 1u;
 	static constexpr auto AnimationDataBinding = 2u;
+	static constexpr auto TextureBinding = 3u;
 public:
 	virtual ~IRenderBackend() = default;
 	virtual bool Startup() = 0;

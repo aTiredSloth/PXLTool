@@ -16,6 +16,8 @@ struct ModelInstance
 	AssetID AnimationId;
 	AssetID ShaderId;
 
+	AssetID TextureId;
+	
 	Transform Transformation;
 };
 
