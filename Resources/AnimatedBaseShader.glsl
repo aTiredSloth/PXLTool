@@ -2,8 +2,8 @@
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec2 aTexCoord;
-layout (location = 3) in ivec2 aBoneIds;
-layout (location = 4) in vec2 aBoneWeights;
+layout (location = 3) in ivec4 aBoneIds;
+layout (location = 4) in vec4 aBoneWeights;
 
 layout (std140, binding = 0) uniform Camera
 {
@@ -26,8 +26,27 @@ out vec3 Normal;
 
 void main()
 {
+	vec4 Pos = vec4(0.0);
+	bool HasInfluence = false;
+	for (int i = 0; i < 4; ++i)
+	{
+		if (aBoneIds[i] == -1)
+		{
+			continue;
+		}
+		HasInfluence = true;
+		
+		vec4 LocalPos = Matrices[aBoneIds[i]] * vec4(aPos, 1.0);
+
+		Pos += LocalPos * aBoneWeights[i];
+	}
+
+	if (!HasInfluence)
+	{
+		Pos = vec4(aPos, 1.0);
+	}
 	mat4 ModelView = View * ModelMatrix;
-	gl_Position = Projection * ModelView * vec4(aPos, 1.0);
+	gl_Position = Projection * ModelView * Pos;
 	TexCoord = aTexCoord;
 	Normal = (transpose(inverse(ModelView)) * vec4(aNormal, 0.0)).xyz;
 }

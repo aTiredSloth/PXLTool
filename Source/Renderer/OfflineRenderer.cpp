@@ -3,11 +3,9 @@
 #include "Core/Evaluated/SceneEvaluator.hpp"
 #include "Renderer/Backends/GL/OpenGLBackend.hpp"
 #include "Renderer/Backends/RenderBackend.hpp"
-#include <future>
 #include <iostream>
 #include <memory>
 #include <GLFW/glfw3.h>
-#include <mutex>
 
 namespace OfflineRenderer
 {
@@ -55,23 +53,15 @@ namespace OfflineRenderer
 		glfwTerminate();
 	}
 
-	std::promise<ImageResource> DispatchRender(const SceneDescription& Scene, const RenderSettings& Settings)
+	ImageResource DispatchRender(const SceneDescription& Scene, const RenderSettings& Settings)
 	{
-		std::promise<ImageResource> Promise;
 		if (Settings.Width == 0 || Settings.Height == 0)
 		{
-			Promise.set_value(ImageResource(nullptr, nullptr, nullptr));
-			return Promise;
+			return ImageResource(nullptr, nullptr, nullptr);
 		}
 		
-		std::thread NewThread([&Promise, &Scene, &Settings]()
-		{
-			EvaluatedScene Evaluation = EvaluateScene(Scene);
-			
-			Promise.set_value(pBackend->Render(Evaluation, Settings));
-		});
+		EvaluatedScene Evaluation = EvaluateScene(Scene);
 		
-		NewThread.join();
-		return Promise;
+		return pBackend->Render(Evaluation, Settings);
 	}
 }

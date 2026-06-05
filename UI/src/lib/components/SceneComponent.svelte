@@ -6,6 +6,12 @@
     let files: any = $state();
     let {Id = $bindable()}: {Id:Scene} = $props();
     let View: any = $state();
+
+    // ── Export modal state ──────────────────────────────────────────────────
+    let showExport   = $state(false);
+    let exportFolder = $state('');
+    let exportBusy   = $state(false);
+
     async function GetMeshes()
     {
     	let response = await fetch("api/meshes");
@@ -15,21 +21,18 @@
     async function GetAnimations()
     {
     	let response = await fetch("api/animations");
-
      	return await response.json();
     }
 
     async function GetTextures()
     {
     	let response = await fetch("api/textures");
-
      	return await response.json();
     }
 
     async function GetShaders()
     {
     	let response = await fetch("api/shaders");
-
      	return await response.json();
     }
 
@@ -51,7 +54,6 @@
     async function Render()
     {
    	await fetch("api/scene/" + Id.Name + "/update", {method: "POST", body: JSON.stringify(Id)});
-    	
     	View.reload();
     }
 
@@ -61,18 +63,52 @@
      	{
     		const formData = new FormData();
       	formData.append("file", file);
-      	
       	await fetch("/api/load", {
       	method: "POST",
       	body: formData
       	});
      	}
-
       return;
     }
-</script>
-<div class="scene-editor">
+
+    function AddPostShader()
+    {
+    	Id.PostShaders = [...(Id.PostShaders ?? []), 0];
+    }
  
+    function RemovePostShader(i: number)
+    {
+    	Id.PostShaders = Id.PostShaders.filter((_: any, idx: number) => idx !== i);
+    }
+
+    function RemoveModel(i: number)
+    {
+    	Id.Models = Id.Models.filter((_: any, idx: number) => idx !== i);
+    }
+
+    // ── Export helpers ──────────────────────────────────────────────────────
+    async function BrowseFolder()
+    {
+        try {
+            const dir = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
+            exportFolder = dir.name;
+        } catch {
+            // user cancelled — leave current value intact
+        }
+    }
+
+    async function ExportScene()
+    {
+      if (!exportFolder.trim()) return;
+      exportBusy = true;
+     	await fetch("api/scene/" + Id.Name + "/update", {method: "POST", body: JSON.stringify(Id)});
+      await fetch("api/scene/" + Id.Name + "/export/" + exportFolder);
+      exportBusy = false;
+      showExport  = false;
+    }
+</script>
+
+<div class="scene-editor">
 	<!-- ── Left: Properties ── -->
 	<div class="props">
  
@@ -95,6 +131,31 @@
 			</div>
 		</div>
  
+		<!-- Output -->
+		<div class="section">
+			<div class="section-hdr">
+				<span class="sh-icon">⬛</span> OUTPUT
+			</div>
+			<div class="section-body">
+				<div class="prop-row">
+					<span class="prop-key">Width</span>
+					<input class="num-input" type="number" bind:value={Id.Width} step="1" min="1" />
+				</div>
+				<div class="prop-row">
+					<span class="prop-key">Height</span>
+					<input class="num-input" type="number" bind:value={Id.Height} step="1" min="1" />
+				</div>
+				<div class="prop-row">
+					<span class="prop-key">Time</span>
+					<input class="num-input" type="number" bind:value={Id.Time} step="0.01" min="0" />
+				</div>
+				<div class="prop-row">
+					<span class="prop-key">Frames Per Second</span>
+					<input class="num-input" type="number" bind:value={Id.FramesPerSecond} step="1" min="1" />
+				</div>
+			</div>
+		</div>
+		
 		<!-- Camera -->
 		<div class="section">
 			<div class="section-hdr">
@@ -170,6 +231,7 @@
 					<div class="model-card">
 						<div class="model-card-top">
 							<span class="mc-label">MODEL {i + 1}</span>
+							<button class="btn-remove" onclick={() => RemoveModel(i)}>✕</button>
 						</div>
 						<div class="prop-row">
 							<span class="prop-key">Mesh</span>
@@ -210,25 +272,33 @@
 			</div>
 		</div>
  
-		<!-- Output -->
+		<!-- Post Shaders -->
 		<div class="section">
 			<div class="section-hdr">
-				<span class="sh-icon">⬛</span> OUTPUT
+				<span class="sh-icon">◈</span> POST SHADERS
+				<button class="btn-inline" onclick={AddPostShader}>+ ADD</button>
 			</div>
 			<div class="section-body">
-				<div class="prop-row">
-					<span class="prop-key">Width</span>
-					<input class="num-input" type="number" bind:value={Id.Width} step="1" min="1" />
-				</div>
-				<div class="prop-row">
-					<span class="prop-key">Height</span>
-					<input class="num-input" type="number" bind:value={Id.Height} step="1" min="1" />
-				</div>
+				{#each (Id.PostShaders ?? []) as _, i}
+					<div class="prop-row">
+						<span class="prop-key">Shader {i + 1}</span>
+						<Dropdown Options={GetShaders} bind:CurrentFilter={Id.PostShaders[i]} />
+						<button class="btn-remove" onclick={() => RemovePostShader(i)}>✕</button>
+					</div>
+				{/each}
+				{#if !Id.PostShaders || Id.PostShaders.length === 0}
+					<div class="models-empty">
+						<span>No post shaders — click ADD above</span>
+					</div>
+				{/if}
 			</div>
 		</div>
  
-		<!-- Render -->
+		<!-- ── Render / Export bar ── -->
 		<div class="render-bar">
+			<button class="btn-export" onclick={() => showExport = true}>
+				<span>⬇</span> EXPORT
+			</button>
 			<button class="btn-render" onclick={Render}>
 				<span>▶</span> RENDER SPRITE SHEET
 			</button>
@@ -246,7 +316,61 @@
 			<ScenePreview bind:this={View} SceneId={Id} />
 		</div>
 	</div>
- 
+
+	<!-- ── Export modal ── -->
+	{#if showExport}
+	<div class="modal-backdrop" onclick={() => showExport = false} role="dialog" aria-modal="true">
+		<div class="modal" onclick={(e) => e.stopPropagation()}>
+
+			<!-- Header -->
+			<div class="modal-hdr">
+				<span class="sh-icon">⬇</span> EXPORT SCENE
+				<button class="btn-remove modal-close" onclick={() => showExport = false}>✕</button>
+			</div>
+
+			<!-- Body -->
+			<div class="modal-body">
+				<div class="modal-desc">
+					Choose a destination folder. The scene will be exported with all
+					referenced assets relative to that directory.
+				</div>
+
+				<div class="prop-label" style="margin-bottom:4px;">Output Folder</div>
+				<div class="folder-row">
+					<input
+						class="text-input"
+						type="text"
+						bind:value={exportFolder}
+						placeholder="e.g. /projects/sprites/output"
+					/>
+					<button class="btn-browse" onclick={BrowseFolder} title="Pick folder">
+						<span>⬡</span> BROWSE
+					</button>
+				</div>
+			</div>
+
+			<!-- Footer -->
+			<div class="modal-footer">
+				<button class="btn btn-ghost modal-cancel" onclick={() => showExport = false}>
+					CANCEL
+				</button>
+				<button
+					class="btn-confirm"
+					onclick={ExportScene}
+					disabled={!exportFolder.trim() || exportBusy}
+				>
+					{#if exportBusy}
+						<span class="spin">◌</span> EXPORTING…
+					{:else}
+						<span>⬇</span> EXPORT
+					{/if}
+				</button>
+			</div>
+
+		</div>
+	</div>
+	{/if}
+
 </div>
  
 <style>
@@ -377,6 +501,24 @@
  
 	.btn-inline:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
  
+	.btn-remove {
+		background: transparent;
+		border: 1px solid var(--border-hi);
+		color: var(--text-dim);
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		font-size: 10px;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		transition: border-color 0.15s, color 0.15s;
+	}
+ 
+	.btn-remove:hover { border-color: #c0392b; color: #c0392b; }
+ 
 	.toggle-row {
 		display: flex;
 		gap: 2px;
@@ -461,6 +603,9 @@
 	.model-card:hover { border-color: var(--border-hi); }
  
 	.model-card-top {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
 		padding-bottom: 5px;
 		border-bottom: 1px solid var(--border);
 	}
@@ -486,12 +631,16 @@
 		letter-spacing: 0.06em;
 		line-height: 1.7;
 	}
- 
+
+	/* ── Render / Export bar ─────────────────────────────────────────────── */
 	.render-bar {
 		padding: 10px 8px;
 		background: #0e0e0e;
 		border-top: 1px solid var(--border);
 		flex-shrink: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
 	}
  
 	.btn-render {
@@ -517,7 +666,33 @@
 		background: #f08848;
 		box-shadow: 0 0 16px var(--accent-glow), 0 0 32px rgba(224,123,57,0.15);
 	}
+
+	.btn-export {
+		width: 100%;
+		background: transparent;
+		border: 1px solid var(--border-hi);
+		color: var(--text-muted);
+		padding: 8px;
+		font-family: 'Chakra Petch', sans-serif;
+		font-size: 10px;
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		transition: border-color 0.15s, color 0.15s, background 0.15s;
+		text-transform: uppercase;
+	}
+
+	.btn-export:hover {
+		border-color: var(--accent);
+		color: var(--accent);
+		background: var(--accent-dim);
+	}
  
+	/* ── Preview pane ────────────────────────────────────────────────────── */
 	.preview-pane {
 		flex: 1;
 		display: flex;
@@ -575,4 +750,149 @@
 		opacity: 0.5;
 		pointer-events: none;
 	}
+
+	/* ── Export modal ────────────────────────────────────────────────────── */
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 100;
+		background: rgba(0, 0, 0, 0.72);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		backdrop-filter: blur(2px);
+	}
+
+	.modal {
+		width: 380px;
+		background: var(--bg-panel);
+		border: 1px solid var(--border-hi);
+		display: flex;
+		flex-direction: column;
+		box-shadow: 0 0 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255,255,255,0.03);
+	}
+
+	.modal-hdr {
+		height: 34px;
+		background: #0e0e0e;
+		border-bottom: 1px solid var(--border);
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 0 10px;
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0.18em;
+		color: var(--text-muted);
+	}
+
+	.modal-close {
+		margin-left: auto;
+	}
+
+	.modal-body {
+		padding: 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.modal-desc {
+		font-size: 10px;
+		color: var(--text-dim);
+		letter-spacing: 0.04em;
+		line-height: 1.7;
+		border-left: 2px solid var(--border-hi);
+		padding-left: 9px;
+	}
+
+	.folder-row {
+		display: flex;
+		gap: 6px;
+		align-items: stretch;
+	}
+
+	.text-input {
+		flex: 1;
+		background: var(--bg-base);
+		border: 1px solid var(--border);
+		color: var(--text);
+		padding: 6px 8px;
+		font-family: 'IBM Plex Mono', monospace;
+		font-size: 11px;
+		outline: none;
+		min-width: 0;
+		transition: border-color 0.15s;
+	}
+
+	.text-input:focus          { border-color: var(--accent); }
+	.text-input::placeholder   { color: var(--text-dim); opacity: 0.6; }
+
+	.btn-browse {
+		background: var(--bg-raised);
+		border: 1px solid var(--border-hi);
+		color: var(--text-muted);
+		padding: 0 10px;
+		font-family: 'Chakra Petch', sans-serif;
+		font-size: 9px;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		white-space: nowrap;
+		transition: border-color 0.15s, color 0.15s, background 0.15s;
+	}
+
+	.btn-browse:hover {
+		border-color: var(--accent);
+		color: var(--accent);
+		background: var(--accent-dim);
+	}
+
+	.modal-footer {
+		padding: 10px 16px 14px;
+		display: flex;
+		gap: 8px;
+		border-top: 1px solid var(--border);
+	}
+
+	.modal-cancel {
+		width: auto;
+		flex-shrink: 0;
+		padding: 8px 14px;
+	}
+
+	.btn-confirm {
+		flex: 1;
+		background: var(--accent);
+		border: none;
+		color: #fff;
+		padding: 9px;
+		font-family: 'Chakra Petch', sans-serif;
+		font-size: 11px;
+		font-weight: 700;
+		letter-spacing: 0.16em;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		transition: background 0.15s, box-shadow 0.15s, opacity 0.15s;
+		text-transform: uppercase;
+	}
+
+	.btn-confirm:hover:not(:disabled) {
+		background: #f08848;
+		box-shadow: 0 0 16px var(--accent-glow);
+	}
+
+	.btn-confirm:disabled {
+		opacity: 0.35;
+		cursor: not-allowed;
+	}
+
+	@keyframes spin { to { transform: rotate(360deg); } }
+	.spin { display: inline-block; animation: spin 1s linear infinite; }
 </style>

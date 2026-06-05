@@ -4,6 +4,7 @@
 #include "Core/Assets/ShaderAsset.hpp"
 #include "Renderer/Backends/GL/GLBuffer.hpp"
 #include "Renderer/Backends/RenderBackend.hpp"
+#include "Renderer/Backends/RenderSettings.hpp"
 #include <atomic>
 #include <cstddef>
 #include <iostream>
@@ -88,6 +89,13 @@ public:
 		
 		std::vector<std::tuple<MeshBuffers, GLuint, GLuint, GLBuffer>> Meshes;
 
+		std::vector<GLuint> PostShaders;
+		PostShaders.reserve(Scene.PostShaders.size());
+		for (auto& PostShader : Scene.PostShaders)
+		{
+			PostShaders.push_back(UploadPostShader(PostShader));
+		}
+		
 		Meshes.reserve(Scene.Models.size());
 		for (auto& Model : Scene.Models)
 		{
@@ -104,6 +112,7 @@ public:
 			auto& [Mesh, Shader, Texture, AnimBuffer] = Meshes.back();
 			if (!Shader)
 			{
+				RenderMutex.unlock();
 				return RenderResult();
 			}
 		}
@@ -111,11 +120,13 @@ public:
 		GLBuffer const SceneBuffer = AquireSceneBuffer(Scene.ViewMatrix, Scene.ProjectionMatrix);
 		GLBuffer const TransformBuffer = AquireTransformBuffer(Scene.Models);
 
-		GLuint const FrameBuffer = AquireFrameBuffer(Settings);
+		auto const [FrameBuffer, ColorTexture, NormalTexture, DepthTexture] = AquireFrameBuffer(Settings);
 
 		GL_CHECK(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FrameBuffer));
 		GL_CHECK(glViewport(0, 0, Settings.Width, Settings.Height));
-		GL_CHECK(glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
+		glClear(GL_DEPTH_BUFFER_BIT);
+		glEnable(GL_DEPTH_TEST);
+		glDepthFunc(GL_LESS);
 		
 		uint32_t BufferOffset = 0;
 		for (auto& [MeshBuffer, Shader, Texture, AnimationBuffer] : Meshes)
@@ -150,9 +161,10 @@ public:
 				GL_CHECK(glBindTextureUnit(0, Texture));
 				GL_CHECK(glUniform1i(IRenderBackend::TextureBinding, 0)); 
 			}
-
-			GL_CHECK(glDrawElements(GL_TRIANGLES, IndexBuffer.Size / (sizeof(uint32_t)), GL_UNSIGNED_INT, 0));
 			
+			GL_CHECK(glDrawElements(GL_TRIANGLES, IndexBuffer.Size / (sizeof(uint32_t)), GL_UNSIGNED_INT, 0));
+
+			//Cleanup
 			GL_CHECK(glBindVertexArray(0));
 			GL_CHECK(glBindBufferBase(GL_UNIFORM_BUFFER, IRenderBackend::SceneDataBinding, 0));
 			GL_CHECK(glBindBufferBase(GL_UNIFORM_BUFFER, IRenderBackend::ModelDataBinding, 0));
@@ -164,10 +176,16 @@ public:
 			
 			ReleaseDynamicBuffer(AnimationBuffer);
 		}
+
+		//Post
+		PostProcessing(ColorTexture, Settings, PostShaders);
+
+		//Cleanup
 		GL_CHECK(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
 		ReleaseDynamicBuffer(TransformBuffer);
 		ReleaseDynamicBuffer(SceneBuffer);
 
+		//Process Results
 		RenderResult Result = GetResults(FrameBuffer);
 
 		ReleaseFrameBuffer(FrameBuffer);
@@ -222,15 +240,29 @@ public:
 		{
 			auto& Attribute = Vertex::GetAttributes()[i];
 			GL_CHECK(glEnableVertexAttribArray(Attribute.Location));
-			glVertexAttribPointer
-			(
-				Attribute.Location, 
-				GetFormatSize(Attribute.Format),
-				GetFormatType(Attribute.Format),
-				false,
-				sizeof(Vertex), 
-				reinterpret_cast<const void*>(Attribute.Offset)
-			);
+			if (Attribute.Format == EVertexAttributeFormatType::IVector2D ||
+    			Attribute.Format == EVertexAttributeFormatType::IVector3D ||
+    			Attribute.Format == EVertexAttributeFormatType::IVector4D)
+			{
+				GL_CHECK(glVertexAttribIPointer(
+        		Attribute.Location,
+        		GetFormatSize(Attribute.Format),
+        		GetFormatType(Attribute.Format),
+        		sizeof(Vertex),
+        		reinterpret_cast<const void*>(Attribute.Offset)
+				));
+			}
+			else
+			{
+				GL_CHECK(glVertexAttribPointer(
+        		Attribute.Location,
+        		GetFormatSize(Attribute.Format),
+        		GetFormatType(Attribute.Format),
+        		GL_FALSE,
+        		sizeof(Vertex),
+        		reinterpret_cast<const void*>(Attribute.Offset)
+				));
+			}
 		}
 
 		Meshes.insert({ Id, NewBuffer });
@@ -252,7 +284,7 @@ public:
 		GLuint VertexShader = GL_CHECK(glCreateShader(GL_VERTEX_SHADER));
 
 		const char* VertexShaderSources[] = {"#version 460\n", "#define VERTEX_SHADER\n", Shader.SourceCode.c_str()};
-		glShaderSource(VertexShader, sizeof(VertexShaderSources)/sizeof(VertexShaderSources[0]), VertexShaderSources, nullptr);
+		GL_CHECK(glShaderSource(VertexShader, sizeof(VertexShaderSources)/sizeof(VertexShaderSources[0]), VertexShaderSources, nullptr));
 		
 		GL_CHECK(glCompileShader(VertexShader));
 		
@@ -266,7 +298,7 @@ public:
 		GLuint FragmentShader = GL_CHECK(glCreateShader(GL_FRAGMENT_SHADER));
 
 		const char* FragmentShaderSources[] = {"#version 460\n", "#define FRAGMENT_SHADER\n", Shader.SourceCode.c_str()};
-		glShaderSource(FragmentShader, sizeof(FragmentShaderSources)/sizeof(FragmentShaderSources[0]), FragmentShaderSources, nullptr);
+		GL_CHECK(glShaderSource(FragmentShader, sizeof(FragmentShaderSources)/sizeof(FragmentShaderSources[0]), FragmentShaderSources, nullptr));
 		
 		GL_CHECK(glCompileShader(FragmentShader));
 		
@@ -311,6 +343,43 @@ public:
 		return Program;
 	}
 	
+	GLuint UploadPostShader(AssetID Id)
+	{
+		if (Shaders.contains(Id))
+		{
+			return Shaders[Id];
+		}
+
+		ShaderAsset const Shader = *AssetManager::GetShader(Id);
+		
+		GLuint const ComputeShader = GL_CHECK(glCreateShader(GL_COMPUTE_SHADER));
+
+		const char* ComputeShaderSources[] = {"#version 460\n", Shader.SourceCode.c_str()};
+		glShaderSource(ComputeShader, sizeof(ComputeShaderSources)/sizeof(ComputeShaderSources[0]), ComputeShaderSources, nullptr);
+		
+		GL_CHECK(glCompileShader(ComputeShader));
+		
+		std::string const ComputeName = std::string("Compute Shader: " + Shader.Name);
+
+		if (!ValidateShader(ComputeShader, ComputeName.c_str()))
+		{
+			return 0;
+		}
+		
+		GLuint const Program = GL_CHECK(glCreateProgram());
+		GL_CHECK(glAttachShader(Program, ComputeShader));
+		GL_CHECK(glLinkProgram(Program));
+		if (!ValidateProgram(Program))
+		{
+			return 0;
+		}
+		
+		GL_CHECK(glDeleteShader(ComputeShader));
+		
+		Shaders.insert({Id, Program});
+		return Program;
+	}
+	
 	GLuint UploadTexture(AssetID Id)
 	{
 		if (Textures.contains(Id))
@@ -319,6 +388,11 @@ public:
 		}
 		
 		auto Texture = AssetManager::GetTexture(Id);
+
+		if (!Texture && FallbackTexture)
+		{
+			return FallbackTexture;
+		}
 		
 		GLuint NewTex;
 		GL_CHECK(glCreateTextures(GL_TEXTURE_2D, 1, &NewTex));
@@ -351,7 +425,8 @@ public:
 
 		if (!Texture)
 		{
-			return NewTex;
+			FallbackTexture = NewTex;
+			return FallbackTexture;
 		}
 
 		switch (Format)
@@ -489,7 +564,7 @@ public:
 		*It->first = false;
 	}
 	
-	GLuint AquireFrameBuffer(const RenderSettings& Settings)
+	std::tuple<GLuint, GLuint, GLuint, GLuint> AquireFrameBuffer(const RenderSettings& Settings)
 	{
 		GLuint TexColorBuffer;
 		GL_CHECK(glCreateTextures(GL_TEXTURE_2D, 1, &TexColorBuffer));
@@ -521,7 +596,7 @@ public:
 		GLuint FrameBuffer = 0;
 		GL_CHECK(glCreateFramebuffers(1, &FrameBuffer));
 		
-		glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)FrameBuffer);
+		GL_CHECK(glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)FrameBuffer));
 		GL_CHECK(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, TexColorBuffer, 0));
 		GL_CHECK(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, TexNormalBuffer, 0));
 		GL_CHECK(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, TexDepthBuffer, 0));
@@ -529,12 +604,23 @@ public:
 		GLenum status = GL_CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER));
 		if (status != GL_FRAMEBUFFER_COMPLETE)
 		{
-			return 0;
+			return {0, 0, 0, 0};
 		}
 	
 		GL_CHECK(glBindTexture(GL_TEXTURE_2D, 0));
 
-		return FrameBuffer;
+
+		constexpr unsigned char const ColorClear[] = { 0, 0, 0, 0 };
+		GL_CHECK(glClearTexImage(TexColorBuffer, 0, GL_RGBA, GL_UNSIGNED_BYTE, ColorClear));
+
+		constexpr unsigned char const NormalClear[] = {127, 127, 255};
+		GL_CHECK(glClearTexImage(TexNormalBuffer, 0, GL_RGB, GL_UNSIGNED_BYTE, NormalClear));
+
+		GLenum const DrawBuffers[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+
+		GL_CHECK(glNamedFramebufferDrawBuffers(FrameBuffer, sizeof(DrawBuffers)/sizeof(DrawBuffers[0]), DrawBuffers));
+		
+		return {FrameBuffer, TexColorBuffer, TexNormalBuffer, TexDepthBuffer};
 	}
 	
 	void ReleaseFrameBuffer(GLuint FrameBuffer)
@@ -624,6 +710,26 @@ public:
 			std::make_unique<Image>(pDepthBuffer, Width, Height, 1)
 		};
 	}
+
+	void PostProcessing(GLuint ColorTexture, const RenderSettings& Settings, const std::vector<GLuint>& ComputeShaders)
+	{
+		for (auto& Program : ComputeShaders)
+		{
+			if (Program == 0)
+			{
+				continue;
+			}
+			
+			glUseProgram(Program);
+			glBindImageTexture(0, ColorTexture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8);
+			GL_CHECK(glUniform1i(0, 0)); 
+			glBindImageTexture(1, ColorTexture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+			GL_CHECK(glUniform1i(1, 1)); 
+			glDispatchCompute(Settings.Width, Settings.Height, 1);
+			glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+		}
+		glUseProgram(0);
+	}
 private:
 	GLFWwindow* pWindow;
 	std::mutex RenderMutex;
@@ -632,6 +738,7 @@ private:
 	std::unordered_map<GLuint, bool> ShaderTextureUsage;
 	std::unordered_map<AssetID, GLuint> Textures;
 	std::vector<std::pair<std::unique_ptr<std::atomic_char>, GLBuffer>> DynamicBuffers;
+	GLuint FallbackTexture = 0;
 };
 
 bool OpenGLBackend::Startup()

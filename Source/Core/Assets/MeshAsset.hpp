@@ -66,8 +66,8 @@ struct Vertex
 	glm::vec2 TexCoords;
 	glm::vec4 Color;
 
-	int BoneIds[MaxBoneWeights] = {-1};
-	float BoneWeights[MaxBoneWeights] = {0.0f};
+	int BoneIds[MaxBoneWeights] = {-1, -1, -1, -1};
+	float BoneWeights[MaxBoneWeights] = {0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 struct MeshAsset

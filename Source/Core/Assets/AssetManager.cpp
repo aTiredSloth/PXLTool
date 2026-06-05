@@ -8,6 +8,8 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 #include <cstring>
+#include <glm/ext/quaternion_geometric.hpp>
+#include <glm/fwd.hpp>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -19,14 +21,15 @@
 #include<assimp/matrix4x4.h>
 #include "Core/Assets/TextureAsset.hpp"
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
 #include "glm/gtc/quaternion.hpp"
+#include "stb_image.h"
 
 namespace AssetManager
 {
 	void ImportMesh(const aiMesh* pMesh);
 	SkeletonAsset ImportSkeleton(const aiMesh* pMesh);
 	void ImportAnimation(const aiAnimation* pAnimation);
+	void SetVertexWeights(const std::vector<Bone>& Bones, std::vector<Vertex>& Vertices);
 
 	
 	std::unordered_map<AssetID, MeshAsset> Meshes;
@@ -145,8 +148,13 @@ namespace AssetManager
 		
 		Assimp::Importer Importer;
 
-		unsigned Flags = aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenNormals;
-		const aiScene* pImportedScene = Importer.ReadFileFromMemory(Binary.data(), Binary.size(), Flags, Extension.c_str());
+		unsigned Flags = aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenNormals | aiProcess_PopulateArmatureData;
+		const aiScene* const pImportedScene = Importer.ReadFileFromMemory(Binary.data(), Binary.size(), Flags, Extension.c_str());
+
+		if (!pImportedScene)
+		{
+			return;
+		}
 		
 		for (size_t i = 0; i < pImportedScene->mNumMeshes; ++i)
 		{
@@ -197,14 +205,15 @@ namespace AssetManager
 		NewMesh.Vertices = std::move(Vertices);
 		NewMesh.Indices = std::move(Indices);
 		NewMesh.Skeleton = ImportSkeleton(pMesh);
-		
+
+		SetVertexWeights(NewMesh.Skeleton.Bones, NewMesh.Vertices);
+
 		Meshes.insert({GenerateId(), std::move(NewMesh)});
 	}
 
 	void ImportAnimation(const aiAnimation* pAnimation)
 	{
 		std::unordered_map<std::string, AnimationAsset::BoneChannels> Channels;
-		
 		for (uint32_t i = 0; i < pAnimation->mNumChannels; ++i)
 		{
 			aiNodeAnim* const pChannel = pAnimation->mChannels[i];
@@ -214,33 +223,32 @@ namespace AssetManager
 			Rotation.reserve(pChannel->mNumRotationKeys);
 			for (uint32_t j = 0; j < pChannel->mNumRotationKeys; ++j)
 			{
-				auto& Key = pChannel->mRotationKeys[i];
+				auto& Key = pChannel->mRotationKeys[j];
 				Rotation.push_back({Key.mTime, GLMAssimp::GetGLMQuat(Key.mValue)});
 			}
 			
 			Scale.reserve(pChannel->mNumScalingKeys);
 			for (uint32_t j = 0; j < pChannel->mNumScalingKeys; ++j)
 			{
-				auto& Key = pChannel->mScalingKeys[i];
+				auto& Key = pChannel->mScalingKeys[j];
 				Scale.push_back({Key.mTime, GLMAssimp::GetGLMVec(Key.mValue)});
 			}
 			
 			Location.reserve(pChannel->mNumPositionKeys);
 			for (uint32_t j = 0; j < pChannel->mNumPositionKeys; ++j)
 			{
-				auto& Key = pChannel->mPositionKeys[i];
-				Scale.push_back({Key.mTime, GLMAssimp::GetGLMVec(Key.mValue)});
+				auto& Key = pChannel->mPositionKeys[j];
+				Location.push_back({Key.mTime, GLMAssimp::GetGLMVec(Key.mValue)});
 			}
 			
 			Channels.insert({pChannel->mNodeName.C_Str(), NewChannels});
 		}
 		
 		AnimationAsset NewAnimation;
-		NewAnimation.FramesPerSecond = pAnimation->mTicksPerSecond;
+		NewAnimation.TicksPerSecond = pAnimation->mTicksPerSecond;
 		NewAnimation.Length = pAnimation->mDuration;
 		NewAnimation.Name = pAnimation->mName.C_Str();
 		NewAnimation.Channels = std::move(Channels);
-		
 		Animations.insert({GenerateId(), std::move(NewAnimation)});
 	}
 
@@ -250,25 +258,49 @@ namespace AssetManager
 		{
 			return {};
 		}
-		
+
+		std::unordered_map<std::string, int> BoneToIndex;
+		std::unordered_map<std::string, std::string> BoneToParentName;
 		SkeletonAsset NewAsset;
-		NewAsset.Bones.resize(pMesh->mNumBones);
-		for (uint32_t i = 0; i < pMesh->mNumBones; ++i)
+		auto& Bones = NewAsset.Bones;
+		Bones.resize(pMesh->mNumBones);
+		for (uint32_t i = 0; i < Bones.size(); ++i)
 		{
-			const aiBone* const SkeletonBone = pMesh->mBones[i];
-			Bone& NewBone = NewAsset.Bones[i];
-			NewBone.Name = pMesh->mName.C_Str();
-			NewBone.InverseBindMatrix = GLMAssimp::ConvertMatrixToGLMFormat(SkeletonBone->mOffsetMatrix);
-		
-			for (uint32_t j = 0; j < SkeletonBone->mNumWeights; ++j)
+			const aiBone* const pSkeletonBone = pMesh->mBones[i];
+			Bone& NewBone = Bones[i];
+			NewBone.Name = pSkeletonBone->mName.C_Str();
+			NewBone.OffsetMatrix = GLMAssimp::ConvertMatrixToGLMFormat(pSkeletonBone->mOffsetMatrix);
+			NewBone.LocalMatrix = GLMAssimp::ConvertMatrixToGLMFormat(pSkeletonBone->mNode->mTransformation);
+			NewBone.Parent = -1;
+			
+			for (uint32_t j = 0; j < pSkeletonBone->mNumWeights; ++j)
 			{
-				const aiVertexWeight& Weight = SkeletonBone->mWeights[j];
+				const aiVertexWeight& Weight = pSkeletonBone->mWeights[j];
 				
 				BoneWeight NewWeight;
 				NewWeight.Weight = Weight.mWeight;
 				NewWeight.Id = Weight.mVertexId;
 				
 				NewBone.Weights.push_back(NewWeight);
+			}
+
+			BoneToIndex.insert({NewBone.Name, i});
+			if (pSkeletonBone->mNode->mParent)
+			{
+				BoneToParentName.insert({NewBone.Name, pSkeletonBone->mNode->mParent->mName.C_Str()});
+			}
+		}
+
+		//Map Parents
+		for (auto i = 0; i < Bones.size(); ++i)
+		{
+			auto& Bone = Bones[i];
+			auto& ParentName = BoneToParentName[Bone.Name];
+			
+			if (BoneToIndex.contains(ParentName))
+			{
+				Bone.Parent = BoneToIndex[ParentName];
+				Bones[Bone.Parent].Children.push_back(i);
 			}
 		}
 		
@@ -316,5 +348,62 @@ namespace AssetManager
 		}
 
 		return std::optional<TextureAsset>();
+	}
+
+	void SetVertexWeights(const std::vector<Bone>& Bones, std::vector<Vertex>& Vertices)
+	{
+		for (size_t i = 0; i < Bones.size(); ++i)
+		{
+			auto& Bone = Bones[i];
+			
+			for (auto& Weight : Bone.Weights)
+			{
+				auto& Vertex = Vertices[Weight.Id];
+
+				auto Count = 0u;
+				for (auto j = 0; j < Vertex::MaxBoneWeights; ++j)
+				{
+					auto& Id = Vertex.BoneIds[j];
+
+					if (Id != -1)
+					{
+						Count += 1;
+					}
+				}
+
+				if (Count == Vertex::MaxBoneWeights)
+				{
+					int WeakestSlot = 0;
+					for (auto j = 1; j < Vertex::MaxBoneWeights; ++j)
+					{
+						if (Vertex.BoneWeights[j] < Vertex.BoneWeights[WeakestSlot])
+						{
+							WeakestSlot = j;
+						}
+					}
+
+					if (Vertex.BoneWeights[WeakestSlot] < Weight.Weight)
+					{
+						Vertex.BoneIds[WeakestSlot] = i;
+						Vertex.BoneWeights[WeakestSlot] = Weight.Weight;
+					}
+				}
+				else 
+				{
+					auto& Id = Vertex.BoneIds[Count];
+					auto& VertexWeight = Vertex.BoneWeights[Count];
+					Id = i;
+					VertexWeight = Weight.Weight;
+				}
+			}
+		}
+
+		//Normalize Weights
+		for (auto& Vert : Vertices)
+		{
+			auto& W = *(glm::vec4*)Vert.BoneWeights;
+			float Sum = W.x + W.y + W.z + W.w;
+			if (Sum > 0.0f) W /= Sum;
+		}
 	}
 }

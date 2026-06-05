@@ -12,7 +12,7 @@ struct AnimationAsset
 	using BoneChannels = std::tuple<KeyFrame<glm::qua<float>> , KeyFrame<glm::vec3>, KeyFrame<glm::vec3>>;
 
 	float Length;
-	float FramesPerSecond;
+	float TicksPerSecond;
 	std::string Name;
 	std::unordered_map<std::string, BoneChannels> Channels;
 };

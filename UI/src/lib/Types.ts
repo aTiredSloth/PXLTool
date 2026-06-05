@@ -39,5 +39,7 @@ type Scene =
 	Camera: CameraData;
 	Models: Model[];
 	Width: number;
-	Height: number;	
+	Height: number;
+	PostShaders: number[];
+	FramesPerSecond: number;
 };

@@ -1,5 +1,6 @@
 #ifndef SCENEDESCRIPTION_HPP
 #define SCENEDESCRIPTION_HPP
+#include "Core/Assets/AssetId.hpp"
 #include "Core/Runtime/ModelInstance.hpp"
 #include <glm/vec3.hpp>
 #include <vector>
@@ -27,6 +28,7 @@ struct SceneDescription
 	float TimeStamp;
 	Camera CameraData;
 	std::vector<ModelInstance> Models;
+	std::vector<AssetID> PostShaders;
 };
 
 #endif

@@ -5,10 +5,14 @@
 #include "Core/Evaluated/EvaluatedScene.hpp"
 #include "Core/Runtime/ModelInstance.hpp"
 #include <glm/ext/matrix_clip_space.hpp>
+#include <glm/fwd.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/trigonometric.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/string_cast.hpp>
 #include <iostream>
 #include <optional>
+#include <vector>
 
 std::pair<glm::mat4, glm::mat4> CalculateCameraProjection(const Camera& CameraData)
 {
@@ -27,19 +31,21 @@ std::pair<glm::mat4, glm::mat4> CalculateCameraProjection(const Camera& CameraDa
 }
 
 static glm::mat4 GetChannelMatrix(const AnimationAsset& Animation, const Bone& BoneChannel, float Time);
+static void CalcFinalMatrix(const AnimationAsset& Animation, float Time, const glm::mat4& ParentTransform, const Bone& BoneChannel, std::vector<glm::mat4>& FinalMatrices, const std::vector<Bone>& Bones, size_t Index);
 
 EvaluatedSkeleton EvaluateAnimation(const SkeletonAsset& Skeleton, const AnimationAsset& Animation, float Time)
 {
 	auto& Bones = Skeleton.Bones;
+
+	if (Bones.empty())
+	{
+		return {};
+	}
 	
 	EvaluatedSkeleton Evaluation;
 
 	Evaluation.Matrices.resize(Bones.size());
-
-	for (size_t i = 0; i < Bones.size(); ++i)
-	{
-		Evaluation.Matrices[i] = GetChannelMatrix(Animation, Bones[i], Time);
-	}
+	CalcFinalMatrix(Animation, Time * Animation.TicksPerSecond, glm::mat4(1.0), Bones.front(), Evaluation.Matrices, Bones, 0);
 
 	return Evaluation;
 }
@@ -84,6 +90,7 @@ std::optional<EvaluatedModel> EvaluateModel(const ModelInstance& Model, float Ti
 EvaluatedScene EvaluateScene(const SceneDescription& Scene)
 {
 	EvaluatedScene Evaluation;
+	Evaluation.PostShaders = Scene.PostShaders;
 
 	//Calculate Matrices
 	{
@@ -141,12 +148,23 @@ T GetKeyValue(float Time, AnimationAsset::KeyFrame<T> Channel)
 	return T();
 }
 
+void CalcFinalMatrix(const AnimationAsset& Animation, float Time, const glm::mat4& ParentTransform, const Bone& BoneChannel, std::vector<glm::mat4>& FinalMatrices, const std::vector<Bone>& Bones, size_t Index)
+{
+	glm::mat4 const GlobalTransform = ParentTransform * GetChannelMatrix(Animation, BoneChannel, Time);
+	FinalMatrices[Index] = GlobalTransform * BoneChannel.OffsetMatrix;
+
+	for (auto& Child : BoneChannel.Children)
+	{
+		CalcFinalMatrix(Animation, Time, GlobalTransform, Bones[Child], FinalMatrices, Bones, Child);
+	}
+}
+
 glm::mat4 GetChannelMatrix(const AnimationAsset& Animation, const Bone& BoneChannel, float Time)
 {
 	auto& Channels = Animation.Channels;
 	if (!Channels.contains(BoneChannel.Name))
 	{
-		return BoneChannel.InverseBindMatrix;
+		return glm::mat4(1.0);
 	}
 
 	auto& ChannelRef = Channels.at(BoneChannel.Name);
@@ -156,5 +174,5 @@ glm::mat4 GetChannelMatrix(const AnimationAsset& Animation, const Bone& BoneChan
 	glm::vec3 Scaling = GetKeyValue<glm::vec3>(Time, Scale);
 	glm::vec3 Pos = GetKeyValue<glm::vec3>(Time, Location);
 
-	return glm::translate(glm::mat4(), Pos) * glm::mat4_cast(Rot) * glm::scale(glm::mat4(), Scaling);
+	return glm::translate(glm::mat4(1.0f), Pos) * glm::mat4_cast(Rot) * glm::scale(glm::mat4(1.0f), Scaling);
 }

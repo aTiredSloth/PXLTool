@@ -21,8 +21,11 @@ struct BoneWeight
 struct Bone
 {
 	std::string Name;
-	glm::mat4 InverseBindMatrix;
+	glm::mat4 LocalMatrix; //Offset from parent
+	glm::mat4 OffsetMatrix; //Mesh to Bone/Bind Space
+	int Parent;
 	std::vector<BoneWeight> Weights;
+	std::vector<int> Children;
 };
 
 struct SkeletonAsset

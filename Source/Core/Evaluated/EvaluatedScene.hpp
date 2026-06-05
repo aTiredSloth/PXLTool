@@ -23,6 +23,7 @@ struct EvaluatedScene
 	glm::mat4 ViewMatrix;
 	glm::mat4 ProjectionMatrix;
 	std::vector<EvaluatedModel> Models;
+	std::vector<AssetID> PostShaders;
 };
 
 #endif
