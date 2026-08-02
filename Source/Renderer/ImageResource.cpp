@@ -3,11 +3,11 @@
 #include "stbi/stbi_image_write.h"
 #include <vector>
 
-void write_png_to_memory_callback(void* context, void* data, int size) {
+void write_png_to_memory_callback(void* context, void* data, int size)
+{
     auto* buffer = static_cast<std::vector<uint8_t>*>(context);
     const auto* bytes = static_cast<const uint8_t*>(data);
     
-    // Append the new data packet into your vector
     buffer->insert(buffer->end(), bytes, bytes + size);
 }
 

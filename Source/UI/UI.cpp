@@ -350,7 +350,7 @@ namespace UI
 			}
 			uint32_t FrameCount = MaxTime * FramesPerSecond;
 			
-			for (uint32_t i = 0; i < FrameCount; ++i)
+			for (uint32_t i = 0; i < std::max<uint32_t>(1, FrameCount); ++i)
 			{
 				auto [Color, Normal, Depth] = OfflineRenderer::DispatchRender(Desc, {Width, Height});
 

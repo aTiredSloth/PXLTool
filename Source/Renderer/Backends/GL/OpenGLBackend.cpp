@@ -2,9 +2,12 @@
 #include "Core/Assets/AssetManager.hpp"
 #include "Core/Assets/MeshAsset.hpp"
 #include "Core/Assets/ShaderAsset.hpp"
+#include "Core/Evaluated/EvaluatedScene.hpp"
+#include "Core/Runtime/ModelInstance.hpp"
 #include "Renderer/Backends/GL/GLBuffer.hpp"
 #include "Renderer/Backends/RenderBackend.hpp"
 #include "Renderer/Backends/RenderSettings.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <iostream>
@@ -76,6 +79,7 @@ public:
 			std::cout << "Failed to Load Glad" << std::endl;
 			return false;
 		}
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		glfwMakeContextCurrent(nullptr);
 		
@@ -83,6 +87,8 @@ public:
 	}
 	RenderResult Render(const EvaluatedScene& Scene, const RenderSettings& Settings)
 	{
+		RenderResult Result{nullptr, nullptr, nullptr};
+		
 		RenderMutex.lock();
 		GLFWwindow* pPrevContext = glfwGetCurrentContext();
 		glfwMakeContextCurrent(pWindow);
@@ -105,22 +111,28 @@ public:
 					UploadMesh(Model.MeshId),
 			     	UploadShader(Model.ShaderId),
 					UploadTexture(Model.TextureId),
-				   AquireAnimationBuffer(Model.Skeleton.Matrices)
+				   AcquireAnimationBuffer(Model.Skeleton.Matrices)
 				}
 			);
 
 			auto& [Mesh, Shader, Texture, AnimBuffer] = Meshes.back();
 			if (!Shader)
 			{
-				RenderMutex.unlock();
-				return RenderResult();
+				ReleaseDynamicBuffer(AnimBuffer);
+				Meshes.pop_back();
+				continue;
 			}
 		}
 
-		GLBuffer const SceneBuffer = AquireSceneBuffer(Scene.ViewMatrix, Scene.ProjectionMatrix);
-		GLBuffer const TransformBuffer = AquireTransformBuffer(Scene.Models);
+		auto const [FrameBuffer, ColorTexture, NormalTexture, DepthTexture] = AcquireFrameBuffer(Settings);
+		
+		GLBuffer const SceneBuffer = AcquireSceneBuffer(Scene.ViewMatrix, Scene.ProjectionMatrix);
+		GLBuffer const TransformBuffer = AcquireTransformBuffer(Scene.Models);
 
-		auto const [FrameBuffer, ColorTexture, NormalTexture, DepthTexture] = AquireFrameBuffer(Settings);
+		if (!FrameBuffer || !ColorTexture || !NormalTexture || !DepthTexture)
+		{
+			goto CleanUp;
+		}
 
 		GL_CHECK(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FrameBuffer));
 		GL_CHECK(glViewport(0, 0, Settings.Width, Settings.Height));
@@ -128,66 +140,74 @@ public:
 		glEnable(GL_DEPTH_TEST);
 		glDepthFunc(GL_LESS);
 		
-		uint32_t BufferOffset = 0;
-		for (auto& [MeshBuffer, Shader, Texture, AnimationBuffer] : Meshes)
 		{
-			auto& [VertexBuffer, IndexBuffer] = MeshBuffer;
-			GL_CHECK(glBindVertexArray(VertexBuffer.VAO));
-
-			GL_CHECK(glUseProgram(Shader));
-			
-			GL_CHECK(glBindBuffer(GL_ARRAY_BUFFER, VertexBuffer.VBO));
-			GL_CHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBuffer.Id));
-
-			GL_CHECK(glBindBufferBase(
-			   GL_UNIFORM_BUFFER,
-			   IRenderBackend::SceneDataBinding,
-			   SceneBuffer.Id));
-
-			GL_CHECK(glBindBufferRange(
-			   GL_UNIFORM_BUFFER,
-			   IRenderBackend::ModelDataBinding,
-			   TransformBuffer.Id,
-			   BufferOffset,
-			   TransformBuffer.Size - BufferOffset));
-
-			GL_CHECK(glBindBufferBase(
-			   GL_SHADER_STORAGE_BUFFER,
-			   IRenderBackend::AnimationDataBinding,
-			   AnimationBuffer.Id));
-
-			if (ShaderTextureUsage[Shader])
-			{				
-				GL_CHECK(glBindTextureUnit(0, Texture));
-				GL_CHECK(glUniform1i(IRenderBackend::TextureBinding, 0)); 
+			uint32_t BufferOffset = 0;
+			for (auto& [MeshBuffer, Shader, Texture, AnimationBuffer] : Meshes)
+			{
+				auto& [VertexBuffer, IndexBuffer] = MeshBuffer;
+				GL_CHECK(glBindVertexArray(VertexBuffer.VAO));
+	
+				GL_CHECK(glUseProgram(Shader));
+				
+				GL_CHECK(glBindBuffer(GL_ARRAY_BUFFER, VertexBuffer.VBO));
+				GL_CHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBuffer.Id));
+	
+				GL_CHECK(glBindBufferBase(
+				   GL_UNIFORM_BUFFER,
+				   IRenderBackend::SceneDataBinding,
+				   SceneBuffer.Id));
+	
+				GL_CHECK(glBindBufferRange(
+				   GL_UNIFORM_BUFFER,
+				   IRenderBackend::ModelDataBinding,
+				   TransformBuffer.Id,
+				   BufferOffset,
+				   sizeof(EvaluatedModel::Transformation)));
+				BufferOffset += sizeof(EvaluatedModel::Transformation);
+				
+				GL_CHECK(glBindBufferBase(
+				   GL_SHADER_STORAGE_BUFFER,
+				   IRenderBackend::AnimationDataBinding,
+				   AnimationBuffer.Id));
+	
+				if (ShaderTextureUsage[Shader])
+				{				
+					GL_CHECK(glBindTextureUnit(0, Texture));
+					GL_CHECK(glUniform1i(IRenderBackend::TextureBinding, 0)); 
+				}
+				
+				GL_CHECK(glDrawElements(GL_TRIANGLES, IndexBuffer.Size / (sizeof(uint32_t)), GL_UNSIGNED_INT, 0));
+	
+				//Cleanup
+				GL_CHECK(glBindVertexArray(0));
+				GL_CHECK(glBindBufferBase(GL_UNIFORM_BUFFER, IRenderBackend::SceneDataBinding, 0));
+				GL_CHECK(glBindBufferBase(GL_UNIFORM_BUFFER, IRenderBackend::ModelDataBinding, 0));
+				GL_CHECK(glBindBufferBase(GL_SHADER_STORAGE_BUFFER, IRenderBackend::AnimationDataBinding, 0));
+				GL_CHECK(glBindBuffer(GL_UNIFORM_BUFFER, 0));
+				GL_CHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
+				GL_CHECK(glBindBuffer(GL_ARRAY_BUFFER, 0));
+				GL_CHECK(glUseProgram(0));
 			}
-			
-			GL_CHECK(glDrawElements(GL_TRIANGLES, IndexBuffer.Size / (sizeof(uint32_t)), GL_UNSIGNED_INT, 0));
-
-			//Cleanup
-			GL_CHECK(glBindVertexArray(0));
-			GL_CHECK(glBindBufferBase(GL_UNIFORM_BUFFER, IRenderBackend::SceneDataBinding, 0));
-			GL_CHECK(glBindBufferBase(GL_UNIFORM_BUFFER, IRenderBackend::ModelDataBinding, 0));
-			GL_CHECK(glBindBufferBase(GL_SHADER_STORAGE_BUFFER, IRenderBackend::AnimationDataBinding, 0));
-			GL_CHECK(glBindBuffer(GL_UNIFORM_BUFFER, 0));
-			GL_CHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
-			GL_CHECK(glBindBuffer(GL_ARRAY_BUFFER, 0));
-			GL_CHECK(glUseProgram(0));
-			
-			ReleaseDynamicBuffer(AnimationBuffer);
 		}
+		
 
 		//Post
 		PostProcessing(ColorTexture, Settings, PostShaders);
 
+		Result = GetResults(FrameBuffer);
+		
 		//Cleanup
+		CleanUp:
+		for (auto& [a, b, c, AnimationBuffer] : Meshes)
+		{
+			ReleaseDynamicBuffer(AnimationBuffer);
+		}
+		
 		GL_CHECK(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
 		ReleaseDynamicBuffer(TransformBuffer);
 		ReleaseDynamicBuffer(SceneBuffer);
 
 		//Process Results
-		RenderResult Result = GetResults(FrameBuffer);
-
 		ReleaseFrameBuffer(FrameBuffer);
 
 		glfwMakeContextCurrent(pPrevContext);
@@ -198,9 +218,10 @@ public:
 
 	MeshBuffers UploadMesh(AssetID Id)
 	{
-		if (Meshes.contains(Id))
+		auto It = Meshes.find(Id);
+		if (It != Meshes.end())
 		{
-			return Meshes[Id];
+			return It->second;
 		}
 
 		MeshAsset Mesh = *AssetManager::GetMesh(Id);
@@ -208,24 +229,24 @@ public:
 		auto& Indices = Mesh.Indices;
 
 		MeshBuffers NewBuffer;
-		auto& [VertexBuffer, IndexBuffer] = NewBuffer;
+		auto& [VertBuffer, IndexBuffer] = NewBuffer;
 
-		VertexBuffer.Size = Vertices.size() * sizeof(Vertex);
+		VertBuffer.Size = Vertices.size() * sizeof(Vertex);
 		IndexBuffer.Size = Indices.size() * sizeof(uint32_t);
 		
-		GL_CHECK(glCreateVertexArrays (1, &VertexBuffer.VAO));
-		GL_CHECK(glBindVertexArray(VertexBuffer.VAO));
+		GL_CHECK(glCreateVertexArrays (1, &VertBuffer.VAO));
+		GL_CHECK(glBindVertexArray(VertBuffer.VAO));
 
-		GL_CHECK(glCreateBuffers(1, &VertexBuffer.VBO));
-		GL_CHECK(glBindBuffer(GL_ARRAY_BUFFER, VertexBuffer.VBO));
+		GL_CHECK(glCreateBuffers(1, &VertBuffer.VBO));
+		GL_CHECK(glBindBuffer(GL_ARRAY_BUFFER, VertBuffer.VBO));
 		
 		// Copy vertex attributes to GPU
 		glBufferData(GL_ARRAY_BUFFER,
-		             VertexBuffer.Size,
+		             VertBuffer.Size,
 		             Vertices.data(),
 		             GL_STATIC_DRAW);
 
-		GL_CHECK(glGenBuffers(1, &IndexBuffer.Id));
+		GL_CHECK(glCreateBuffers(1, &IndexBuffer.Id));
 		GL_CHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBuffer.Id));
 		
 		// Copy vertex indices to GPU
@@ -279,16 +300,21 @@ public:
 			return Shaders[Id];
 		}
 
-		ShaderAsset Shader = *AssetManager::GetShader(Id);
+		auto Shader = AssetManager::GetShader(Id);
+
+		if (!Shader)
+		{
+			return 0;
+		}
 		
 		GLuint VertexShader = GL_CHECK(glCreateShader(GL_VERTEX_SHADER));
 
-		const char* VertexShaderSources[] = {"#version 460\n", "#define VERTEX_SHADER\n", Shader.SourceCode.c_str()};
+		const char* VertexShaderSources[] = {"#version 460\n", "#define VERTEX_SHADER\n", Shader->SourceCode.c_str()};
 		GL_CHECK(glShaderSource(VertexShader, sizeof(VertexShaderSources)/sizeof(VertexShaderSources[0]), VertexShaderSources, nullptr));
 		
 		GL_CHECK(glCompileShader(VertexShader));
 		
-		std::string const VertexName = std::string("Vertex Shader: " + Shader.Name);
+		std::string const VertexName = std::string("Vertex Shader: " + Shader->Name);
 
 		if (!ValidateShader(VertexShader, VertexName.c_str()))
 		{
@@ -297,12 +323,12 @@ public:
 
 		GLuint FragmentShader = GL_CHECK(glCreateShader(GL_FRAGMENT_SHADER));
 
-		const char* FragmentShaderSources[] = {"#version 460\n", "#define FRAGMENT_SHADER\n", Shader.SourceCode.c_str()};
+		const char* FragmentShaderSources[] = {"#version 460\n", "#define FRAGMENT_SHADER\n", Shader->SourceCode.c_str()};
 		GL_CHECK(glShaderSource(FragmentShader, sizeof(FragmentShaderSources)/sizeof(FragmentShaderSources[0]), FragmentShaderSources, nullptr));
 		
 		GL_CHECK(glCompileShader(FragmentShader));
 		
-		std::string const FragmentName = std::string("Fragment Shader: " + Shader.Name);
+		std::string const FragmentName = std::string("Fragment Shader: " + Shader->Name);
 		if (!ValidateShader(FragmentShader, FragmentName.c_str()))
 		{
 			return 0;
@@ -314,6 +340,7 @@ public:
 		GL_CHECK(glLinkProgram(Program));
 		if (!ValidateProgram(Program))
 		{
+			GL_CHECK(glDeleteShader(VertexShader));
 			return 0;
 		}
 		
@@ -350,16 +377,21 @@ public:
 			return Shaders[Id];
 		}
 
-		ShaderAsset const Shader = *AssetManager::GetShader(Id);
+		auto Shader = AssetManager::GetShader(Id);
+
+		if (!Shader)
+		{
+			return 0;
+		}
 		
 		GLuint const ComputeShader = GL_CHECK(glCreateShader(GL_COMPUTE_SHADER));
 
-		const char* ComputeShaderSources[] = {"#version 460\n", Shader.SourceCode.c_str()};
+		const char* ComputeShaderSources[] = {"#version 460\n", Shader->SourceCode.c_str()};
 		glShaderSource(ComputeShader, sizeof(ComputeShaderSources)/sizeof(ComputeShaderSources[0]), ComputeShaderSources, nullptr);
 		
 		GL_CHECK(glCompileShader(ComputeShader));
 		
-		std::string const ComputeName = std::string("Compute Shader: " + Shader.Name);
+		std::string const ComputeName = std::string("Compute Shader: " + Shader->Name);
 
 		if (!ValidateShader(ComputeShader, ComputeName.c_str()))
 		{
@@ -460,14 +492,14 @@ public:
 		Textures.insert({Id, NewTex});
 		return NewTex;
 	}
-	GLBuffer AquireTransformBuffer(const std::vector<EvaluatedModel> Models)
+	GLBuffer AcquireTransformBuffer(const std::vector<EvaluatedModel>& Models)
 	{
 		if (Models.empty())
 		{
 			return {0,0, true};
 		}
 		
-		GLBuffer Buffer = AquireDynamicBuffer(sizeof(glm::mat4)*Models.size(), false);
+		GLBuffer Buffer = AcquireDynamicBuffer(sizeof(glm::mat4)*Models.size(), false);
 
 
 		glm::mat4* pMappedData = reinterpret_cast<glm::mat4*>(glMapNamedBuffer(Buffer.Id, GL_WRITE_ONLY));
@@ -482,7 +514,7 @@ public:
 
 		return Buffer;
 	}
-	GLBuffer AquireAnimationBuffer(const std::vector<glm::mat4> Matrices)
+	GLBuffer AcquireAnimationBuffer(const std::vector<glm::mat4> Matrices)
 	{
 		if (Matrices.empty())
 		{
@@ -490,14 +522,14 @@ public:
 		}
 		
 		auto const BufferSize = sizeof(glm::mat4)*Matrices.size();
-		GLBuffer Buffer = AquireDynamicBuffer(BufferSize, true);
+		GLBuffer Buffer = AcquireDynamicBuffer(BufferSize, true);
 		GL_CHECK(glNamedBufferSubData(Buffer.Id, 0, BufferSize, Matrices.data()));
 
 		return Buffer;
 	}
-	GLBuffer AquireSceneBuffer(const glm::mat4& View, const glm::mat4& Projection)
+	GLBuffer AcquireSceneBuffer(const glm::mat4& View, const glm::mat4& Projection)
 	{
-		GLBuffer Buffer = AquireDynamicBuffer(sizeof(glm::mat4)*2, false);
+		GLBuffer Buffer = AcquireDynamicBuffer(sizeof(glm::mat4)*2, false);
 
 		glm::mat4* pMappedData = reinterpret_cast<glm::mat4*>(glMapNamedBuffer(Buffer.Id, GL_WRITE_ONLY));
 
@@ -512,11 +544,11 @@ public:
 		return Buffer;
 	}
 
-	GLBuffer AquireDynamicBuffer(GLsizei Size, bool bIsStorage)
+	GLBuffer AcquireDynamicBuffer(GLsizei Size, bool bIsStorage)
 	{
 		for (auto& [bIsActive, Buffer] : DynamicBuffers)
 		{
-			if (*bIsActive || Buffer.bIsStorage == bIsStorage)
+			if (*bIsActive || Buffer.bIsStorage != bIsStorage)
 			{
 				continue;
 			}
@@ -524,7 +556,7 @@ public:
 			if (Buffer.Size >= Size)
 			{
 				
-				//Check if the Aquire was successfull
+				//Check if the Acquire was successfull
 				bool bWasInActive = bIsActive->fetch_or(1);
 
 				if (bWasInActive)
@@ -564,7 +596,7 @@ public:
 		*It->first = false;
 	}
 	
-	std::tuple<GLuint, GLuint, GLuint, GLuint> AquireFrameBuffer(const RenderSettings& Settings)
+	std::tuple<GLuint, GLuint, GLuint, GLuint> AcquireFrameBuffer(const RenderSettings& Settings)
 	{
 		GLuint TexColorBuffer;
 		GL_CHECK(glCreateTextures(GL_TEXTURE_2D, 1, &TexColorBuffer));
@@ -619,7 +651,8 @@ public:
 		GLenum const DrawBuffers[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
 
 		GL_CHECK(glNamedFramebufferDrawBuffers(FrameBuffer, sizeof(DrawBuffers)/sizeof(DrawBuffers[0]), DrawBuffers));
-		
+
+		glFinish();
 		return {FrameBuffer, TexColorBuffer, TexNormalBuffer, TexDepthBuffer};
 	}
 	
@@ -642,6 +675,8 @@ public:
 		GL_CHECK(glGetNamedFramebufferAttachmentParameteriv(FrameBuffer, GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &Object));
 		Texture = Object;
 		GL_CHECK(glDeleteTextures(1, &Texture));
+
+		glDeleteFramebuffers(1, &FrameBuffer);
 	}
 	
 	void Shutdown()
@@ -653,7 +688,16 @@ public:
 			GL_CHECK(glDeleteBuffers(1, &Buffer.Id));
 		}
 
-		for (auto& [Id, Buffers] : Meshes)
+		if (FallbackTexture)
+		{
+			GL_CHECK(glDeleteTextures(1, &FallbackTexture));
+		}
+		for (auto& [x, Texture] : Textures)
+		{
+			GL_CHECK(glDeleteTextures(1, &Texture));
+		}
+		
+		for (auto& [x, Buffers] : Meshes)
 		{
 			auto& [Vertex, Index] = Buffers;
 			GL_CHECK(glDeleteVertexArrays(1, &Vertex.VAO));
@@ -661,7 +705,7 @@ public:
 			GL_CHECK(glDeleteBuffers(1, &Index.Id));
 		}
 
-		for (auto& [Id, Program] : Shaders)
+		for (auto& [x, Program] : Shaders)
 		{
 			GL_CHECK(glDeleteProgram(Program));
 		}
@@ -672,7 +716,6 @@ public:
 
 	RenderResult GetResults(GLuint FrameBuffer)
 	{
-		
 		GLint Object = 0;
 		GL_CHECK(glGetNamedFramebufferAttachmentParameteriv(FrameBuffer, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &Object));
 		GLuint const ColorTexture = Object;
@@ -682,37 +725,67 @@ public:
 		GL_CHECK(glGetTextureLevelParameteriv(ColorTexture, 0, GL_TEXTURE_HEIGHT, &Height));
 
 		GLsizei ColorSize = Width*Height*4*sizeof(unsigned char);
-		char* const pColorBuffer = new char[ColorSize];
+		std::vector<char> ColorBuffer(0, ColorSize);
 		GLsizei NormalSize = Width*Height*3*sizeof(unsigned char);
-		char* const pNormalBuffer = new char[NormalSize];
-		GLsizei DepthSize = Width*Height*sizeof(float);
-		char* const pDepthBuffer = new char[DepthSize];
+		std::vector<char> NormalBuffer(0, NormalSize);
+		GLsizei DepthSize = Width*Height*sizeof(unsigned char);
+		std::vector<char> DepthBuffer(0, DepthSize);
 
 		//Color		
-		GL_CHECK(glGetTextureImage(ColorTexture, 0, GL_RGBA, GL_UNSIGNED_BYTE, ColorSize, pColorBuffer));
+		GL_CHECK(glGetTextureImage(ColorTexture, 0, GL_RGBA, GL_UNSIGNED_BYTE, ColorSize, ColorBuffer.data()));
 
-		
 		//Normal
 		GL_CHECK(glGetNamedFramebufferAttachmentParameteriv(FrameBuffer, GL_COLOR_ATTACHMENT1, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &Object));
 		GLuint const NormalTexture = Object;
-		GL_CHECK(glGetTextureImage(NormalTexture, 0, GL_RGB, GL_UNSIGNED_BYTE, NormalSize, pNormalBuffer));
+		GL_CHECK(glGetTextureImage(NormalTexture, 0, GL_RGB, GL_UNSIGNED_BYTE, NormalSize, NormalBuffer.data()));
 
 		//Depth
 		GL_CHECK(glGetNamedFramebufferAttachmentParameteriv(FrameBuffer, GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &Object));
 		GLuint const DepthTexture = Object;
-		GL_CHECK(glGetTextureImage(DepthTexture, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, DepthSize, pDepthBuffer));
+		GL_CHECK(glGetTextureImage(DepthTexture, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, DepthSize, DepthBuffer.data()));
 		
 		
-		return
+		RenderResult Result = 
 		{
-			std::make_unique<Image>(pColorBuffer, Width, Height, 4),
-			std::make_unique<Image>(pNormalBuffer, Width, Height, 3),
-			std::make_unique<Image>(pDepthBuffer, Width, Height, 1)
+			std::make_unique<Image>(ColorBuffer.data(), Width, Height, 4),
+			std::make_unique<Image>(NormalBuffer.data(), Width, Height, 3),
+			std::make_unique<Image>(DepthBuffer.data(), Width, Height, 1)
 		};
+		
+		return Result;
 	}
 
 	void PostProcessing(GLuint ColorTexture, const RenderSettings& Settings, const std::vector<GLuint>& ComputeShaders)
 	{
+		GLuint TexColorBuffer;
+		GL_CHECK(glCreateTextures(GL_TEXTURE_2D, 1, &TexColorBuffer));
+		GL_CHECK(glBindTexture(GL_TEXTURE_2D, TexColorBuffer));
+		
+		GL_CHECK(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, Settings.Width, Settings.Height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL));
+		
+		GL_CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST));
+		GL_CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
+		
+		GL_CHECK
+		(
+			glCopyImageSubData(ColorTexture,
+			GL_TEXTURE_2D,
+			0,
+			0,
+			0,
+			0,
+			TexColorBuffer,
+			GL_TEXTURE_2D,
+			0,
+			0,
+			0,
+			0,
+			Settings.Width,
+			Settings.Height,
+			1)
+		);
+
+		
 		for (auto& Program : ComputeShaders)
 		{
 			if (Program == 0)
@@ -720,15 +793,36 @@ public:
 				continue;
 			}
 			
-			glUseProgram(Program);
-			glBindImageTexture(0, ColorTexture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8);
+			GL_CHECK(glUseProgram(Program));
+			GL_CHECK(glBindImageTexture(0, ColorTexture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8));
 			GL_CHECK(glUniform1i(0, 0)); 
-			glBindImageTexture(1, ColorTexture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+			GL_CHECK(glBindImageTexture(1, TexColorBuffer, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8));
 			GL_CHECK(glUniform1i(1, 1)); 
 			glDispatchCompute(Settings.Width, Settings.Height, 1);
 			glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 		}
 		glUseProgram(0);
+
+		GL_CHECK
+		(
+			glCopyImageSubData(TexColorBuffer,
+			GL_TEXTURE_2D,
+			0,
+			0,
+			0,
+			0,
+			ColorTexture,
+			GL_TEXTURE_2D,
+			0,
+			0,
+			0,
+			0,
+			Settings.Width,
+			Settings.Height,
+			1)
+		);
+
+		glDeleteTextures(1, &TexColorBuffer);
 	}
 private:
 	GLFWwindow* pWindow;
@@ -884,13 +978,13 @@ const char* GLErrorString(GLenum err)
 {
     switch (err)
     {
-        case GL_INVALID_ENUM:                  return "GL_INVALID_ENUM";
-        case GL_INVALID_VALUE:                 return "GL_INVALID_VALUE";
-        case GL_INVALID_OPERATION:             return "GL_INVALID_OPERATION";
+        case GL_INVALID_ENUM: return "GL_INVALID_ENUM";
+        case GL_INVALID_VALUE: return "GL_INVALID_VALUE";
+        case GL_INVALID_OPERATION: return "GL_INVALID_OPERATION";
         case GL_INVALID_FRAMEBUFFER_OPERATION: return "GL_INVALID_FRAMEBUFFER_OPERATION";
-        case GL_OUT_OF_MEMORY:                 return "GL_OUT_OF_MEMORY";
-        case GL_STACK_UNDERFLOW:               return "GL_STACK_UNDERFLOW";
-        case GL_STACK_OVERFLOW:               return "GL_STACK_OVERFLOW";
-        default:                               return "UNKNOWN";
+        case GL_OUT_OF_MEMORY: return "GL_OUT_OF_MEMORY";
+        case GL_STACK_UNDERFLOW: return "GL_STACK_UNDERFLOW";
+        case GL_STACK_OVERFLOW: return "GL_STACK_OVERFLOW";
+        default: return "UNKNOWN";
     }
 }

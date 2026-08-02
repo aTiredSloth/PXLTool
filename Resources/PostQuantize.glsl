@@ -14,9 +14,9 @@ void main()
 
     vec4 Color = imageLoad(InputImage, TexCoord);
     
-    Color.r = Quantize(Color.r, 5.0);
-    Color.g = Quantize(Color.g, 5.0);
-    Color.b = Quantize(Color.b, 5.0);
+    Color.r = Quantize(Color.r, 2.0);
+    Color.g = Quantize(Color.g, 2.0);
+    Color.b = Quantize(Color.b, 2.0);
     
     imageStore(OutputImage, TexCoord, Color);
 }
