@@ -79,10 +79,10 @@ namespace AssetManager
 		pDatabase = std::make_unique<SQLite::Database>("savedata.db3", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
 
 		pDatabase->exec("CREATE TABLE IF NOT EXISTS MESHES ( Id INTEGER PRIMARY KEY, Name TEXT, Vertices BLOB, Indices BLOB, BoneCount INTEGER)");
-		pDatabase->exec("CREATE TABLE IF NOT EXISTS BONES ( MeshId INTEGER, Index INTEGER, Name TEXT, LocalMatrix BLOB, OffsetMatrix BLOB, Parent INTEGER, Weights BLOB, Children BLOB)");
+		pDatabase->exec("CREATE TABLE IF NOT EXISTS BONES ( MeshId INTEGER, BoneIndex INTEGER, Name TEXT, LocalMatrix BLOB, OffsetMatrix BLOB, Parent INTEGER, Weights BLOB, Children BLOB)");
 		
 		pDatabase->exec("CREATE TABLE IF NOT EXISTS ANIMATIONS ( Id INTEGER PRIMARY KEY, Name TEXT, Length REAL, TicksPerSecond REAL, ChannelCount INTEGER)");
-		pDatabase->exec("CREATE TABLE IF NOT EXISTS ANIMATION_CHANNELS (AnimationId INTEGER, Index INTEGER, BoneName TEXT, Rotations BLOB, Positions BLOB, Scales BLOB)");
+		pDatabase->exec("CREATE TABLE IF NOT EXISTS ANIMATION_CHANNELS (AnimationId INTEGER, ChannelIndex INTEGER, BoneName TEXT, Rotations BLOB, Positions BLOB, Scales BLOB)");
 		
 		pDatabase->exec("CREATE TABLE IF NOT EXISTS TEXTURES ( Id INTEGER PRIMARY KEY, Name TEXT, Width INTEGER, Height INTEGER, ChannelCount INTEGER, Blob BLOB)");
 		pDatabase->exec("CREATE TABLE IF NOT EXISTS SHADERS ( Id INTEGER, Name TEXT, SourceCode TEXT)");
@@ -120,13 +120,10 @@ namespace AssetManager
 
 		IterateTable(pTableName, [&Array](SQLite::Statement& Query)
 			{
-				while (Query.executeStep())
-				{
-					uint32_t const Id = Query.getColumn(0);
-        			const char* pName = Query.getColumn(1);
-		
-           		Array.push_back(AssetID{pName, Id});
-				}
+				uint32_t const Id = Query.getColumn(0);
+        		const char* pName = Query.getColumn(1);
+           
+           	Array.push_back(AssetID{pName, Id});
 			}
 		);
 		
@@ -274,7 +271,7 @@ namespace AssetManager
 	
 	std::optional<ShaderAsset> GetShader(AssetID Id)
 	{
-		SQLite::Statement Query(GetDatabase(), "SELECT * FROM MESHES WHERE Id = ?");
+		SQLite::Statement Query(GetDatabase(), "SELECT * FROM SHADERS WHERE Id = ?");
 
 		Query.bind(1, static_cast<uint32_t>(Id.Id));
 
@@ -368,7 +365,7 @@ namespace AssetManager
 		
 		SetVertexWeights(Bones, Vertices);
 
-		SQLite::Statement InsertMesh(GetDatabase(), "INSERT INTO MESHES (Id, Name, Vertices, Indices, BoneCount) VALUES (?,?,?)");
+		SQLite::Statement InsertMesh(GetDatabase(), "INSERT INTO MESHES (Id, Name, Vertices, Indices, BoneCount) VALUES (?,?,?,?,?)");
 
 		auto MeshId = GenerateId();
 		InsertMesh.bind(1, MeshId);
@@ -384,7 +381,7 @@ namespace AssetManager
 			auto& Bone = Bones[i];
 			
 			SQLite::Statement InsertBone(GetDatabase(), "INSERT INTO BONES "
-				"(MeshId, Index, Name, LocalMatrix, OffsetMatrix, Parent, Weights, Children) VALUES (?,?,?,?,?,?,?,?)");
+				"(MeshId, BoneIndex, Name, LocalMatrix, OffsetMatrix, Parent, Weights, Children) VALUES (?,?,?,?,?,?,?,?)");
 
 			
 			InsertBone.bind(1, MeshId);
@@ -451,7 +448,7 @@ namespace AssetManager
 			auto& [Rotations, Scales, Positions] = Data;
 			
 			SQLite::Statement InsertAnimation(GetDatabase(), "INSERT INTO ANIMATIONS" 
-				" (AnimationId, Index, BoneName, Rotations, Positions, Scales) VALUES (?,?,?,?,?,?)");
+				" (AnimationId, ChannelIndex, BoneName, Rotations, Positions, Scales) VALUES (?,?,?,?,?,?)");
 
 			InsertAnimation.bind(1, AnimId);
 			InsertAnimation.bind(2, i);
@@ -528,8 +525,6 @@ namespace AssetManager
 		
 		uint8_t* const pImageBytes = stbi_load_from_memory(Binary.data(), Binary.size(), &Width, &Height, &ChannelCount, 4);
 		int const Size = Width*Height*ChannelCount;
-
-		stbi_image_free(pImageBytes);
 		
 		SQLite::Statement Insert(GetDatabase(), "INSERT INTO TEXTURES (Id, Name, Width, Height, ChannelCount, Blob) VALUES (?,?,?,?,?,?)");
 
@@ -541,6 +536,9 @@ namespace AssetManager
 		Insert.bind(6, pImageBytes, Size);
 
 		Insert.exec();
+
+		stbi_image_free(pImageBytes);
+		
 	}
 
 	std::vector<AssetID> GetAllTextureIds()
@@ -550,7 +548,7 @@ namespace AssetManager
 	
 	std::optional<TextureAsset> GetTexture(AssetID Id)
 	{
-		SQLite::Statement Query(GetDatabase(), "SELECT * FROM MESHES WHERE Id = ?");
+		SQLite::Statement Query(GetDatabase(), "SELECT * FROM TEXTURES WHERE Id = ?");
 
 		Query.bind(1, static_cast<uint32_t>(Id.Id));
 

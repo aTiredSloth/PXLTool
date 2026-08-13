@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { onMount } from "svelte";
+
 
 	let {CurrentFilter = $bindable<AssetID>(), Options} = $props();
 	let Filter: AssetID[] = $state([]);
@@ -12,6 +14,13 @@
 			if (match) CurrentFilter = match;
 		}
 	}
+
+	onMount(() =>
+	{
+		(async () => {
+			const res = await Refresh();
+		})();
+	})
 </script>
 
 <div class="dropdown">
