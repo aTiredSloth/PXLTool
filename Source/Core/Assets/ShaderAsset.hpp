@@ -4,7 +4,6 @@
 
 struct ShaderAsset
 {
-	std::string Name;
 	std::string SourceCode;
 };
 

@@ -314,7 +314,7 @@ public:
 		
 		GL_CHECK(glCompileShader(VertexShader));
 		
-		std::string const VertexName = std::string("Vertex Shader: " + Shader->Name);
+		std::string const VertexName = std::string("Vertex Shader: " + Id.Name);
 
 		if (!ValidateShader(VertexShader, VertexName.c_str()))
 		{
@@ -328,7 +328,7 @@ public:
 		
 		GL_CHECK(glCompileShader(FragmentShader));
 		
-		std::string const FragmentName = std::string("Fragment Shader: " + Shader->Name);
+		std::string const FragmentName = std::string("Fragment Shader: " + Id.Name);
 		if (!ValidateShader(FragmentShader, FragmentName.c_str()))
 		{
 			return 0;
@@ -391,7 +391,7 @@ public:
 		
 		GL_CHECK(glCompileShader(ComputeShader));
 		
-		std::string const ComputeName = std::string("Compute Shader: " + Shader->Name);
+		std::string const ComputeName = std::string("Compute Shader: " + Id.Name);
 
 		if (!ValidateShader(ComputeShader, ComputeName.c_str()))
 		{
@@ -725,11 +725,11 @@ public:
 		GL_CHECK(glGetTextureLevelParameteriv(ColorTexture, 0, GL_TEXTURE_HEIGHT, &Height));
 
 		GLsizei ColorSize = Width*Height*4*sizeof(unsigned char);
-		std::vector<char> ColorBuffer(0, ColorSize);
+		std::vector<char> ColorBuffer(ColorSize, 0);
 		GLsizei NormalSize = Width*Height*3*sizeof(unsigned char);
-		std::vector<char> NormalBuffer(0, NormalSize);
+		std::vector<char> NormalBuffer(NormalSize, 0);
 		GLsizei DepthSize = Width*Height*sizeof(unsigned char);
-		std::vector<char> DepthBuffer(0, DepthSize);
+		std::vector<char> DepthBuffer(DepthSize, 0);
 
 		//Color		
 		GL_CHECK(glGetTextureImage(ColorTexture, 0, GL_RGBA, GL_UNSIGNED_BYTE, ColorSize, ColorBuffer.data()));

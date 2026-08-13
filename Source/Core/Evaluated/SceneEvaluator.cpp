@@ -63,13 +63,13 @@ std::optional<EvaluatedModel> EvaluateModel(const ModelInstance& Model, float Ti
 	glm::mat4 const Rotate = glm::mat4_cast(ModelTransform.Rotation);
 	Evaluation.Transformation = Translation * Rotate * Scale;
 
-	if (Model.AnimationId)
+	if (Model.AnimationId.Id)
 	{
 		auto Mesh = AssetManager::GetMesh(Model.MeshId);
 
 		if (!Mesh)
 		{
-			std::cout << "Failed to Evaluate Model " << Model.MeshId << " Mesh is not valid" << std::endl;
+			std::cout << "Failed to Evaluate Model " << Model.MeshId.Id << " Mesh is not valid" << std::endl;
 			return {};
 		}
 

@@ -1,3 +1,4 @@
+#include "Core/Assets/AssetManager.hpp"
 #include "Renderer/OfflineRenderer.hpp"
 #include "UI/UI.hpp"
 #include <SQLiteCpp/Database.h>
@@ -9,13 +10,16 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 
-	SQLite::Database DB("savedata.db3", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+	if (!AssetManager::Startup())
+	{
+		return -1;
+	}
 	
-	auto Result = UI::Start(DB);
+	auto Result = UI::Start();
 	
 	OfflineRenderer::Shutdown();
 
-	DB.backup("savedata.db3", SQLite::Database::BackupType::Save);
+	AssetManager::Shutdown();
 	
 	return Result;
 }

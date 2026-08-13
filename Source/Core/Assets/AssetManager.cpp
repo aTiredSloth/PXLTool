@@ -4,10 +4,14 @@
 #include "Core/Assets/MeshAsset.hpp"
 #include "Core/Assets/ShaderAsset.hpp"
 #include "Core/Assets/SkeletonAsset.hpp"
+#include <SQLiteCpp/Column.h>
+#include <SQLiteCpp/Statement.h>
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <cstdint>
 #include <cstring>
+#include <glm/detail/type_quat.hpp>
 #include <glm/ext/quaternion_geometric.hpp>
 #include <glm/fwd.hpp>
 #include <iostream>
@@ -15,6 +19,7 @@
 #include <memory>
 #include <random>
 #include <sstream>
+#include <string>
 #include <unordered_map>
 #include<assimp/quaternion.h>
 #include<assimp/vector3.h>
@@ -32,11 +37,12 @@ namespace AssetManager
 	void SetVertexWeights(const std::vector<Bone>& Bones, std::vector<Vertex>& Vertices);
 
 	
-	std::unordered_map<AssetID, MeshAsset> Meshes;
-	std::unordered_map<AssetID, AnimationAsset> Animations;
-	std::unordered_map<AssetID, ShaderAsset> Shaders;
-	std::unordered_map<AssetID, TextureAsset> Textures;
-
+	//std::unordered_map<AssetID, MeshAsset> Meshes;
+	//std::unordered_map<AssetID, AnimationAsset> Animations;
+	//std::unordered_map<AssetID, ShaderAsset> Shaders;
+	//std::unordered_map<AssetID, TextureAsset> Textures;
+	std::unique_ptr<SQLite::Database> pDatabase;
+	
 	namespace GLMAssimp
 	{
 		
@@ -61,74 +67,229 @@ namespace AssetManager
 		}
 	};
 
-	inline AssetID GenerateId()
+	inline uint32_t GenerateId()
 	{
-		static std::mt19937_64 rng(std::random_device{}());
-   	return rng();
+		static std::mt19937 rng(std::random_device{}());
+   	return  rng();
 	}
 
 
-	std::vector<AssetID> GetAllMeshIds()
+	bool Startup()
 	{
-		std::vector<AssetID> Array(Meshes.size(), 0);
+		pDatabase = std::make_unique<SQLite::Database>("savedata.db3", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
 
-		for (size_t i = 0; i < Meshes.size(); ++i)
+		pDatabase->exec("CREATE TABLE IF NOT EXISTS MESHES ( Id INTEGER PRIMARY KEY, Name TEXT, Vertices BLOB, Indices BLOB, BoneCount INTEGER)");
+		pDatabase->exec("CREATE TABLE IF NOT EXISTS BONES ( MeshId INTEGER, Index INTEGER, Name TEXT, LocalMatrix BLOB, OffsetMatrix BLOB, Parent INTEGER, Weights BLOB, Children BLOB)");
+		
+		pDatabase->exec("CREATE TABLE IF NOT EXISTS ANIMATIONS ( Id INTEGER PRIMARY KEY, Name TEXT, Length REAL, TicksPerSecond REAL, ChannelCount INTEGER)");
+		pDatabase->exec("CREATE TABLE IF NOT EXISTS ANIMATION_CHANNELS (AnimationId INTEGER, Index INTEGER, BoneName TEXT, Rotations BLOB, Positions BLOB, Scales BLOB)");
+		
+		pDatabase->exec("CREATE TABLE IF NOT EXISTS TEXTURES ( Id INTEGER PRIMARY KEY, Name TEXT, Width INTEGER, Height INTEGER, ChannelCount INTEGER, Blob BLOB)");
+		pDatabase->exec("CREATE TABLE IF NOT EXISTS SHADERS ( Id INTEGER, Name TEXT, SourceCode TEXT)");
+		
+		return pDatabase != nullptr;
+	}
+
+	void Shutdown()
+	{
+		pDatabase->backup("savedata.db3", SQLite::Database::BackupType::Save);
+		pDatabase.reset();
+	}
+	
+	SQLite::Database& GetDatabase()
+	{
+		return *pDatabase;
+	}
+
+	template<typename Func>
+	void IterateTable(const char* pTableName, Func Function)
+	{
+		std::string const Command = std::string("SELECT * FROM ") + pTableName;
+		
+		SQLite::Statement Query(GetDatabase(), Command);
+
+		while (Query.executeStep())
 		{
-			Array[i] = std::next(Meshes.begin(), i)->first;
+			Function(Query);
 		}
+	}
 
+	std::vector<AssetID> GetIdsFromTable(const char* pTableName)
+	{
+		std::vector<AssetID> Array;
+
+		IterateTable(pTableName, [&Array](SQLite::Statement& Query)
+			{
+				while (Query.executeStep())
+				{
+					uint32_t const Id = Query.getColumn(0);
+        			const char* pName = Query.getColumn(1);
+		
+           		Array.push_back(AssetID{pName, Id});
+				}
+			}
+		);
+		
 		return Array;
 	}
+	
+	std::vector<AssetID> GetAllMeshIds()
+	{
+		return GetIdsFromTable("MESHES");
+	}
+	
 	std::optional<MeshAsset> GetMesh(AssetID Id)
 	{
-		if (Meshes.contains(Id))
+		SQLite::Statement Query(GetDatabase(), "SELECT * FROM MESHES WHERE Id = ?");
+
+		Query.bind(1, static_cast<uint32_t>(Id.Id));
+
+		std::optional<MeshAsset> Data;
+		while (Query.executeStep())
 		{
-			return std::optional<MeshAsset>(Meshes[Id]);
+			const char* pName = Query.getColumn(1);
+			const Vertex* const pVertices = reinterpret_cast<const Vertex*>(Query.getColumn(2).getBlob());
+			uint32_t const VertexCount = Query.getColumn(2).getBytes()/sizeof(Vertex);
+			const uint32_t* pIndices = reinterpret_cast<const uint32_t*>(Query.getColumn(3).getBlob());
+			uint32_t const IndexCount = Query.getColumn(3).getBytes()/sizeof(uint32_t);
+			uint32_t const BoneCount = Query.getColumn(4);
+			std::vector<Bone> Bones;
+			Bones.resize(BoneCount);
+			
+			for (uint32_t i = 0; i < BoneCount; ++i)
+			{
+				SQLite::Statement BoneQuery(GetDatabase(), "SELECT * FROM BONES WHERE MeshId = ? AND Index = ?");
+
+				Query.bind(1, static_cast<uint32_t>(Id.Id));
+				Query.bind(2, static_cast<uint32_t>(i));
+
+				
+				while (BoneQuery.executeStep())
+				{
+					std::string const Name = BoneQuery.getColumn(2);
+					glm::mat4 const LocalMatrix = *reinterpret_cast<const glm::mat4*>(BoneQuery.getColumn(3).getBlob());
+					glm::mat4 const OffsetMatrix = *reinterpret_cast<const glm::mat4*>(BoneQuery.getColumn(4).getBlob());
+					int const Parent = BoneQuery.getColumn(5);
+					auto WeightColumn = BoneQuery.getColumn(6);
+					const BoneWeight* const pWeights = reinterpret_cast<const BoneWeight*>(WeightColumn.getBlob());
+					std::vector<BoneWeight> const Weights = pWeights ? 
+						std::vector<BoneWeight>(pWeights, pWeights + (WeightColumn.getBytes()/sizeof(BoneWeight))) 
+						: std::vector<BoneWeight>();
+					auto ChildrenColumn = BoneQuery.getColumn(7);
+					const int* const pChildren = reinterpret_cast<const int*>(ChildrenColumn.getBlob());
+					std::vector<int> const Children = pChildren ? 
+						std::vector<int>(pChildren, pChildren + (ChildrenColumn.getBytes()/sizeof(int))) 
+						: std::vector<int>();
+
+					Bones[i] = Bone{Name, LocalMatrix, OffsetMatrix, Parent, std::move(Weights), std::move(Children)};
+				}
+			}
+			
+			Data = MeshAsset
+			{
+				pName,
+				std::vector<Vertex>(pVertices, pVertices + VertexCount),
+				std::vector<uint32_t>(pIndices, pIndices + IndexCount),
+				SkeletonAsset{std::move(Bones)}
+			};
 		}
 
-		return std::optional<MeshAsset>();
+		return Data;
 	}
 
 	std::vector<AssetID> GetAllAnimationIds()
 	{
-		std::vector<AssetID> Array(Animations.size(), 0);
-
-		for (size_t i = 0; i < Array.size(); ++i)
-		{
-			Array[i] = std::next(Animations.begin(), i)->first;
-		}
-
-		return Array;
+		return GetIdsFromTable("ANIMATIONS");
 	}
+	
 	std::optional<AnimationAsset> GetAnimation(AssetID Id)
 	{
-		if (Animations.contains(Id))
+		SQLite::Statement Query(GetDatabase(), "SELECT * FROM ANIMATIONS WHERE Id = ?");
+
+		Query.bind(1, static_cast<uint32_t>(Id.Id));
+
+		std::optional<AnimationAsset> Data;
+		while (Query.executeStep())
 		{
-			return std::optional<AnimationAsset>(Animations[Id]);
+			std::unordered_map<std::string, AnimationAsset::BoneChannels> Channels;
+			
+			const char* const pName = Query.getColumn(1);
+			double const Length = Query.getColumn(2);
+			double const TicksPerSecond = Query.getColumn(3);
+			uint32_t const ChannelCount = Query.getColumn(4);
+
+			for (auto i = 0; i < ChannelCount; ++i)
+			{
+				SQLite::Statement ChannelQuery(GetDatabase(), "SELECT * FROM ANIMATION_CHANNELS WHERE AnimationId = ? AND Index = ?");
+
+				Query.bind(1, static_cast<uint32_t>(Id.Id));
+				Query.bind(2, static_cast<uint32_t>(i));
+
+				
+				while (ChannelQuery.executeStep())
+				{
+					const char* const pBoneName = ChannelQuery.getColumn(3);
+
+					auto const RotationColumn = Query.getColumn(4);
+					const std::pair<float, glm::qua<float>>* const pRotations = reinterpret_cast<const std::pair<float, glm::qua<float>>*>(RotationColumn.getBlob());
+					uint32_t const RotationCount = RotationColumn.getBytes()/sizeof(*pRotations);
+					auto const PositionColumn = Query.getColumn(5);
+					const std::pair<float, glm::vec3>* const pPositions = reinterpret_cast<const  std::pair<float, glm::vec3>*>(PositionColumn.getBlob());
+					uint32_t const PositionCount = PositionColumn.getBytes()/sizeof(*pPositions);
+					auto const ScaleColumn = Query.getColumn(6);
+					const std::pair<float, glm::vec3>* const pScales = reinterpret_cast<const  std::pair<float, glm::vec3>*>(ScaleColumn.getBlob());
+					uint32_t const ScaleCount = ScaleColumn.getBytes()/sizeof(*pScales);
+
+					Channels.insert(
+						{
+							pBoneName, 
+							std::tuple<AnimationAsset::KeyFrame<glm::qua<float>> , AnimationAsset::KeyFrame<glm::vec3>, AnimationAsset::KeyFrame<glm::vec3>>
+							{
+								std::vector<std::pair<float, glm::quat>>(pRotations, pRotations + RotationCount),
+								std::vector<std::pair<float, glm::vec3>>(pPositions, pPositions + PositionCount),
+								std::vector<std::pair<float, glm::vec3>>(pScales, pScales + ScaleCount)
+							}
+						}
+					);
+					
+				}
+			}
+			
+			Data = AnimationAsset
+			{
+				static_cast<float>(Length),
+				static_cast<float>(TicksPerSecond),
+				pName,
+				std::move(Channels)
+			};
 		}
 
-		return std::optional<AnimationAsset>();
+		return Data;
 	}
 
 	std::vector<AssetID> GetAllShaderIds()
 	{
-		std::vector<AssetID> Array(Shaders.size(), 0);
-
-		for (size_t i = 0; i < Array.size(); ++i)
-		{
-			Array[i] = std::next(Shaders.begin(), i)->first;
-		}
-
-		return Array;
+		return GetIdsFromTable("SHADERS");
 	}
+	
 	std::optional<ShaderAsset> GetShader(AssetID Id)
 	{
-		if (Shaders.contains(Id))
+		SQLite::Statement Query(GetDatabase(), "SELECT * FROM MESHES WHERE Id = ?");
+
+		Query.bind(1, static_cast<uint32_t>(Id.Id));
+
+		std::optional<ShaderAsset> Data;
+		while (Query.executeStep())
 		{
-			return std::optional<ShaderAsset>(Shaders[Id]);
+			const char* const pSourceCode = Query.getColumn(2);
+			
+			Data = ShaderAsset
+			{
+				pSourceCode
+			};
 		}
 
-		return std::optional<ShaderAsset>();
+		return Data;
 	}
 
 	void LoadShader(const std::string& Name, std::istream& Stream)
@@ -136,10 +297,13 @@ namespace AssetManager
 		std::stringstream StringStream;
 		StringStream << Stream.rdbuf();
 
-		ShaderAsset NewShader;
-		NewShader.Name = Name;
-		NewShader.SourceCode = StringStream.str();
-		Shaders.insert({GenerateId(), std::move(NewShader)});
+		SQLite::Statement Insert(GetDatabase(), "INSERT INTO SHADERS (Id, Name, SourceCode) VALUES (?,?,?)");
+
+		Insert.bind(1, GenerateId());
+		Insert.bind(2, Name);
+		Insert.bind(3, StringStream.str());
+
+		Insert.exec();
 	}
 
 	void LoadScene(const std::string& Extension, std::istream& Stream)
@@ -200,15 +364,40 @@ namespace AssetManager
 			Indices.push_back(pMesh->mFaces[i].mIndices[2]);
 		}
 		
-		MeshAsset NewMesh;
-		NewMesh.Name = pMesh->mName.C_Str();
-		NewMesh.Vertices = std::move(Vertices);
-		NewMesh.Indices = std::move(Indices);
-		NewMesh.Skeleton = ImportSkeleton(pMesh);
+		auto Bones = ImportSkeleton(pMesh).Bones;
+		
+		SetVertexWeights(Bones, Vertices);
 
-		SetVertexWeights(NewMesh.Skeleton.Bones, NewMesh.Vertices);
+		SQLite::Statement InsertMesh(GetDatabase(), "INSERT INTO MESHES (Id, Name, Vertices, Indices, BoneCount) VALUES (?,?,?)");
 
-		Meshes.insert({GenerateId(), std::move(NewMesh)});
+		auto MeshId = GenerateId();
+		InsertMesh.bind(1, MeshId);
+		InsertMesh.bind(2, pMesh->mName.C_Str());
+		InsertMesh.bind(3, Vertices.data(), sizeof(Vertex)*Vertices.size());
+		InsertMesh.bind(4, Indices.data(), sizeof(uint32_t)*Indices.size());
+		InsertMesh.bind(5, static_cast<uint32_t>(Bones.size()));
+
+		InsertMesh.exec();
+
+		for (auto i = 0; i < Bones.size(); ++i)
+		{
+			auto& Bone = Bones[i];
+			
+			SQLite::Statement InsertBone(GetDatabase(), "INSERT INTO BONES "
+				"(MeshId, Index, Name, LocalMatrix, OffsetMatrix, Parent, Weights, Children) VALUES (?,?,?,?,?,?,?,?)");
+
+			
+			InsertBone.bind(1, MeshId);
+			InsertBone.bind(2, i);
+			InsertBone.bind(3, Bone.Name);
+			InsertBone.bind(4, &Bone.LocalMatrix, sizeof(glm::mat4));
+			InsertBone.bind(5, &Bone.OffsetMatrix, sizeof(glm::mat4));
+			InsertBone.bind(6, Bone.Parent);
+			InsertBone.bind(7, Bone.Weights.data(), sizeof(BoneWeight)*Bone.Weights.size());
+			InsertBone.bind(8, Bone.Children.data(), sizeof(int)*Bone.Children.size());
+
+			InsertBone.exec();
+		}
 	}
 
 	void ImportAnimation(const aiAnimation* pAnimation)
@@ -244,12 +433,36 @@ namespace AssetManager
 			Channels.insert({pChannel->mNodeName.C_Str(), NewChannels});
 		}
 		
-		AnimationAsset NewAnimation;
-		NewAnimation.TicksPerSecond = pAnimation->mTicksPerSecond;
-		NewAnimation.Length = pAnimation->mDuration;
-		NewAnimation.Name = pAnimation->mName.C_Str();
-		NewAnimation.Channels = std::move(Channels);
-		Animations.insert({GenerateId(), std::move(NewAnimation)});
+		uint32_t const ChannelCount = static_cast<uint32_t>(Channels.size());
+		SQLite::Statement InsertAnimation(GetDatabase(), "INSERT INTO ANIMATIONS (Id, Name, Length, TicksPerSecond, ChannelCount) VALUES (?,?,?,?,?)");
+
+		auto const AnimId = GenerateId();
+		InsertAnimation.bind(1, AnimId);
+		InsertAnimation.bind(2, pAnimation->mName.C_Str());
+		InsertAnimation.bind(3, pAnimation->mDuration);
+		InsertAnimation.bind(4, pAnimation->mTicksPerSecond);
+		InsertAnimation.bind(5, ChannelCount);
+
+		InsertAnimation.exec();
+		
+		for (uint32_t i = 0; i < ChannelCount; ++i)
+		{
+			auto& [Name, Data] = *std::next(Channels.begin(), i);
+			auto& [Rotations, Scales, Positions] = Data;
+			
+			SQLite::Statement InsertAnimation(GetDatabase(), "INSERT INTO ANIMATIONS" 
+				" (AnimationId, Index, BoneName, Rotations, Positions, Scales) VALUES (?,?,?,?,?,?)");
+
+			InsertAnimation.bind(1, AnimId);
+			InsertAnimation.bind(2, i);
+
+			InsertAnimation.bind(3, Name);
+			InsertAnimation.bind(4, Rotations.data(), Rotations.size()*sizeof(glm::quat));
+			InsertAnimation.bind(5, Positions.data(), Positions.size()*sizeof(glm::vec3));
+			InsertAnimation.bind(6, Scales.data(), Scales.size()*sizeof(glm::vec3));
+
+			InsertAnimation.exec();
+		}
 	}
 
 	SkeletonAsset ImportSkeleton(const aiMesh* pMesh)
@@ -307,7 +520,7 @@ namespace AssetManager
 		return NewAsset;
 	}
 
-	void LoadTexture(std::istream& Stream)
+	void LoadTexture(const std::string& Name, std::istream& Stream)
 	{
 		std::vector<uint8_t> const Binary = std::vector<uint8_t>(std::istreambuf_iterator<char>(Stream), std::istreambuf_iterator<char>());
 
@@ -315,39 +528,53 @@ namespace AssetManager
 		
 		uint8_t* const pImageBytes = stbi_load_from_memory(Binary.data(), Binary.size(), &Width, &Height, &ChannelCount, 4);
 		int const Size = Width*Height*ChannelCount;
-		
-		std::shared_ptr<char[]> pImageBuffer = std::shared_ptr<char[]>(new char[Size]);
 
-		std::memcpy(pImageBuffer.get(), pImageBytes, Size);
-		TextureAsset NewTexture;
-		NewTexture.Width = Width;
-		NewTexture.Height = Height;
-		NewTexture.ChannelCount = ChannelCount;
-		NewTexture.pBuffer = pImageBuffer;
 		stbi_image_free(pImageBytes);
+		
+		SQLite::Statement Insert(GetDatabase(), "INSERT INTO TEXTURES (Id, Name, Width, Height, ChannelCount, Blob) VALUES (?,?,?,?,?,?)");
 
-		Textures.insert({GenerateId(), NewTexture});
+		Insert.bind(1, GenerateId());
+		Insert.bind(2, Name);
+		Insert.bind(3, Width);
+		Insert.bind(4, Height);
+		Insert.bind(5, ChannelCount);
+		Insert.bind(6, pImageBytes, Size);
+
+		Insert.exec();
 	}
 
 	std::vector<AssetID> GetAllTextureIds()
 	{
-		std::vector<AssetID> Array(Textures.size(), 0);
-
-		for (size_t i = 0; i < Array.size(); ++i)
-		{
-			Array[i] = std::next(Textures.begin(), i)->first;
-		}
-
-		return Array;
+		return GetIdsFromTable("TEXTURES");
 	}
+	
 	std::optional<TextureAsset> GetTexture(AssetID Id)
 	{
-		if (Textures.contains(Id))
+		SQLite::Statement Query(GetDatabase(), "SELECT * FROM MESHES WHERE Id = ?");
+
+		Query.bind(1, static_cast<uint32_t>(Id.Id));
+
+		std::optional<TextureAsset> Data;
+		while (Query.executeStep())
 		{
-			return std::optional<TextureAsset>(Textures[Id]);
+			int const Width = Query.getColumn(2);
+			int const Height = Query.getColumn(3);
+			unsigned const ChannelCount = Query.getColumn(4);
+			unsigned const BufferSize = Width*Height*ChannelCount;
+			std::shared_ptr<char[]> pBuffer = std::shared_ptr<char[]>(new char[BufferSize]);
+			SQLite::Column const BufferColumn = Query.getColumn(5);
+			std::memcpy(pBuffer.get(), BufferColumn.getBlob(), BufferColumn.getBytes());
+			
+			Data = TextureAsset
+			{
+				Width,
+				Height,
+				ChannelCount,
+				pBuffer
+			};
 		}
 
-		return std::optional<TextureAsset>();
+		return Data;
 	}
 
 	void SetVertexWeights(const std::vector<Bone>& Bones, std::vector<Vertex>& Vertices)

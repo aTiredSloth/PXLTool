@@ -21,12 +21,18 @@ type CameraData =
 	FOV: number;
 };
 
+type AssetID =
+{
+	Name: string;
+	Id: number;
+};
+
 type Model =
 {
-	MeshId: number;
-	AnimationId: number;
-	TextureId: number;
-	ShaderId: number;
+	MeshId: AssetID;
+	AnimationId: AssetID;
+	TextureId: AssetID;
+	ShaderId: AssetID;
 	Location: Vector3;
 	Rotation: Vector3;
 	Scale: Vector3;

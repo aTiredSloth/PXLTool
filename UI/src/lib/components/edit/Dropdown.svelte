@@ -1,17 +1,23 @@
 <script lang="ts">
 
-	let {CurrentFilter = $bindable(), Options} = $props();
-	let Filter: number[] = $state([]);
+	let {CurrentFilter = $bindable<AssetID>(), Options} = $props();
+	let Filter: AssetID[] = $state([]);
 	async function Refresh()
 	{
 		Filter = await Options();
+
+		if (CurrentFilter)
+		{
+			const match = Filter.find(f => f.Id === CurrentFilter.Id);
+			if (match) CurrentFilter = match;
+		}
 	}
 </script>
 
 <div class="dropdown">
 	<select onclick ={Refresh} bind:value={CurrentFilter} class="engine-select">
 		{#each Filter as filter, i}
-			<option value={filter}>{filter}</option>
+			<option value={filter}>{filter.Name} - {filter.Id}</option>
 		{/each}
 	</select>
 	<span class="arrow">▾</span>

@@ -74,10 +74,10 @@ namespace UI
 
          for (auto& Model : ModelsJson)
 			{
-				AssetID MeshId = Model["MeshId"].u();
-				AssetID AnimationId = Model["AnimationId"].u();
-				AssetID ShaderId = Model["ShaderId"].u();
-				AssetID TextureId = Model["TextureId"].u();
+				AssetID MeshId = {Model["MeshId"]["Name"].s(), Model["MeshId"]["Id"].u()};
+				AssetID AnimationId = {Model["AnimationId"]["Name"].s(), Model["AnimationId"]["Id"].u()};
+				AssetID ShaderId = {Model["ShaderId"]["Name"].s(), Model["ShaderId"]["Id"].u()};
+				AssetID TextureId = {Model["TextureId"]["Name"].s(), Model["TextureId"]["Id"].u()};
 
 				Transform Transformation;
 				Transformation.Location.x = Model["Location"]["x"].d();
@@ -100,7 +100,7 @@ namespace UI
          crow::json::rvalue PostShader = crow::json::load(pPostShaderString);
          for (auto& Id : PostShader)
 			{
-				Desc.PostShaders.push_back(Id.u());
+				Desc.PostShaders.push_back({Id["Name"].s(),Id["Id"].u()});
 			}
       }
 
@@ -154,12 +154,13 @@ namespace UI
 		co_await app->finish();
 	}
 
-	int Start(SQLite::Database& DB)
+	int Start()
 	{
+		SQLite::Database& DBRef = AssetManager::GetDatabase();
 		std::vector<ModelInstance> Models;
-		DB.exec("CREATE TABLE IF NOT EXISTS SCENES ( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT, Width INTEGER, Height INTEGER, PostShaders TEXT, FramesPerSecond INTEGER)");
+		DBRef.exec("CREATE TABLE IF NOT EXISTS SCENES ( Name TEXT PRIMARY KEY, Time REAL, Camera TEXT, Models TEXT, Width INTEGER, Height INTEGER, PostShaders TEXT, FramesPerSecond INTEGER)");
 		
-		RegisterAPI(DB);
+		RegisterAPI(DBRef);
 		
 		Server = App.port(Port).multithreaded().run_async();
 		auto Result = saucer::application::create({ .id = "PXLTool" })->run(start);
@@ -330,7 +331,7 @@ namespace UI
 			float TickTime = 1.0f;
 			for (auto& Model : Desc.Models)
 			{
-				if (!Model.AnimationId)
+				if (!Model.AnimationId.Id)
 				{
 					continue;
 				}
@@ -424,7 +425,8 @@ namespace UI
 			uint64_t i = 0;
 			for (auto& Model : AssetManager::GetAllMeshIds())
 			{
-				Json[i] = Model;
+				Json[i]["Name"] = Model.Name;
+				Json[i]["Id"] = Model.Id;
 				i += 1;
 			}
 
@@ -439,7 +441,8 @@ namespace UI
 			uint64_t i = 0;
 			for (auto& Animation : AssetManager::GetAllAnimationIds())
 			{
-				Json[i] = Animation;
+				Json[i]["Name"] = Animation.Name;
+				Json[i]["Id"] = Animation.Id;
 				i += 1;
 			}
 
@@ -452,9 +455,10 @@ namespace UI
 			crow::json::wvalue Json;
 
 			uint64_t i = 0;
-			for (auto& Animation : AssetManager::GetAllShaderIds())
+			for (auto& Shader : AssetManager::GetAllShaderIds())
 			{
-				Json[i] = Animation;
+				Json[i]["Name"] = Shader.Name;
+				Json[i]["Id"] = Shader.Id;
 				i += 1;
 			}
 
@@ -469,7 +473,8 @@ namespace UI
 			uint64_t i = 0;
 			for (auto& Texture : AssetManager::GetAllTextureIds())
 			{
-				Json[i] = Texture;
+				Json[i]["Name"] = Texture.Name;
+				Json[i]["Id"] = Texture.Id;
 				i += 1;
 			}
 
@@ -508,7 +513,7 @@ namespace UI
 			}
 			else if (Extension == ".png")
 			{
-				AssetManager::LoadTexture(Stream);
+				AssetManager::LoadTexture(std::filesystem::path(FileName).filename().string(), Stream);
 			}
 			
         	return crow::response(200, "File uploaded");

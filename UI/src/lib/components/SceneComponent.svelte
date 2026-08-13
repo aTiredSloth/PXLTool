@@ -40,10 +40,10 @@
     {
     	Id.Models = [...(Id.Models ?? []),
      {
-     	MeshId: 0, 
-     	AnimationId: 0,
-      TextureId: 0,
-     	ShaderId: 0, 
+     	MeshId: {Name: "", Id: 0}, 
+     	AnimationId: {Name: "", Id: 0},
+      TextureId: {Name: "", Id: 0},
+     	ShaderId: {Name: "", Id: 0}, 
      	Location: {x: 0, y: 0, z: 0}, 
      	Rotation: {x: 0, y: 0, z: 0}, 
      	Scale: {x: 1, y: 1, z: 1}
