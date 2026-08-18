@@ -155,10 +155,10 @@ namespace AssetManager
 			
 			for (uint32_t i = 0; i < BoneCount; ++i)
 			{
-				SQLite::Statement BoneQuery(GetDatabase(), "SELECT * FROM BONES WHERE MeshId = ? AND Index = ?");
+				SQLite::Statement BoneQuery(GetDatabase(), "SELECT * FROM BONES WHERE MeshId = ? AND BoneIndex = ?");
 
-				Query.bind(1, static_cast<uint32_t>(Id.Id));
-				Query.bind(2, static_cast<uint32_t>(i));
+				BoneQuery.bind(1, static_cast<uint32_t>(Id.Id));
+				BoneQuery.bind(2, static_cast<uint32_t>(i));
 
 				
 				while (BoneQuery.executeStep())
@@ -217,23 +217,23 @@ namespace AssetManager
 
 			for (auto i = 0; i < ChannelCount; ++i)
 			{
-				SQLite::Statement ChannelQuery(GetDatabase(), "SELECT * FROM ANIMATION_CHANNELS WHERE AnimationId = ? AND Index = ?");
+				SQLite::Statement ChannelQuery(GetDatabase(), "SELECT * FROM ANIMATION_CHANNELS WHERE AnimationId = ? AND ChannelIndex = ?");
 
-				Query.bind(1, static_cast<uint32_t>(Id.Id));
-				Query.bind(2, static_cast<uint32_t>(i));
+				ChannelQuery.bind(1, static_cast<uint32_t>(Id.Id));
+				ChannelQuery.bind(2, static_cast<uint32_t>(i));
 
 				
 				while (ChannelQuery.executeStep())
 				{
-					const char* const pBoneName = ChannelQuery.getColumn(3);
+					const char* const pBoneName = ChannelQuery.getColumn(2);
 
-					auto const RotationColumn = Query.getColumn(4);
+					auto const RotationColumn = ChannelQuery.getColumn(3);
 					const std::pair<float, glm::qua<float>>* const pRotations = reinterpret_cast<const std::pair<float, glm::qua<float>>*>(RotationColumn.getBlob());
 					uint32_t const RotationCount = RotationColumn.getBytes()/sizeof(*pRotations);
-					auto const PositionColumn = Query.getColumn(5);
+					auto const PositionColumn = ChannelQuery.getColumn(4);
 					const std::pair<float, glm::vec3>* const pPositions = reinterpret_cast<const  std::pair<float, glm::vec3>*>(PositionColumn.getBlob());
 					uint32_t const PositionCount = PositionColumn.getBytes()/sizeof(*pPositions);
-					auto const ScaleColumn = Query.getColumn(6);
+					auto const ScaleColumn = ChannelQuery.getColumn(5);
 					const std::pair<float, glm::vec3>* const pScales = reinterpret_cast<const  std::pair<float, glm::vec3>*>(ScaleColumn.getBlob());
 					uint32_t const ScaleCount = ScaleColumn.getBytes()/sizeof(*pScales);
 
@@ -342,9 +342,12 @@ namespace AssetManager
 			NewVertex.Position.x = pMesh->mVertices[i].x;
 			NewVertex.Position.y = pMesh->mVertices[i].y;
 			NewVertex.Position.z = pMesh->mVertices[i].z;
-			
-			NewVertex.TexCoords.x = pMesh->mTextureCoords[0][i].x;
-			NewVertex.TexCoords.y = pMesh->mTextureCoords[0][i].y;
+
+			if (pMesh->mTextureCoords[0])
+			{
+				NewVertex.TexCoords.x = pMesh->mTextureCoords[0][i].x;
+				NewVertex.TexCoords.y = pMesh->mTextureCoords[0][i].y;
+			}
 			
 			NewVertex.Normal.x = pMesh->mNormals[i].x;
 			NewVertex.Normal.y = pMesh->mNormals[i].y;
@@ -447,18 +450,18 @@ namespace AssetManager
 			auto& [Name, Data] = *std::next(Channels.begin(), i);
 			auto& [Rotations, Scales, Positions] = Data;
 			
-			SQLite::Statement InsertAnimation(GetDatabase(), "INSERT INTO ANIMATIONS" 
+			SQLite::Statement InsertChannel(GetDatabase(), "INSERT INTO ANIMATION_CHANNELS" 
 				" (AnimationId, ChannelIndex, BoneName, Rotations, Positions, Scales) VALUES (?,?,?,?,?,?)");
 
-			InsertAnimation.bind(1, AnimId);
-			InsertAnimation.bind(2, i);
+			InsertChannel.bind(1, AnimId);
+			InsertChannel.bind(2, i);
 
-			InsertAnimation.bind(3, Name);
-			InsertAnimation.bind(4, Rotations.data(), Rotations.size()*sizeof(glm::quat));
-			InsertAnimation.bind(5, Positions.data(), Positions.size()*sizeof(glm::vec3));
-			InsertAnimation.bind(6, Scales.data(), Scales.size()*sizeof(glm::vec3));
+			InsertChannel.bind(3, Name);
+			InsertChannel.bind(4, Rotations.data(), Rotations.size()*sizeof(glm::quat));
+			InsertChannel.bind(5, Positions.data(), Positions.size()*sizeof(glm::vec3));
+			InsertChannel.bind(6, Scales.data(), Scales.size()*sizeof(glm::vec3));
 
-			InsertAnimation.exec();
+			InsertChannel.exec();
 		}
 	}
 
@@ -523,7 +526,7 @@ namespace AssetManager
 
 		int Width, Height, ChannelCount;
 		
-		uint8_t* const pImageBytes = stbi_load_from_memory(Binary.data(), Binary.size(), &Width, &Height, &ChannelCount, 4);
+		uint8_t* const pImageBytes = stbi_load_from_memory(Binary.data(), Binary.size(), &Width, &Height, &ChannelCount, 0);
 		int const Size = Width*Height*ChannelCount;
 		
 		SQLite::Statement Insert(GetDatabase(), "INSERT INTO TEXTURES (Id, Name, Width, Height, ChannelCount, Blob) VALUES (?,?,?,?,?,?)");
@@ -583,12 +586,12 @@ namespace AssetManager
 			
 			for (auto& Weight : Bone.Weights)
 			{
-				auto& Vertex = Vertices[Weight.Id];
+				auto& Vert = Vertices[Weight.Id];
 
 				auto Count = 0u;
 				for (auto j = 0; j < Vertex::MaxBoneWeights; ++j)
 				{
-					auto& Id = Vertex.BoneIds[j];
+					auto& Id = Vert.BoneIds[j];
 
 					if (Id != -1)
 					{
@@ -601,22 +604,22 @@ namespace AssetManager
 					int WeakestSlot = 0;
 					for (auto j = 1; j < Vertex::MaxBoneWeights; ++j)
 					{
-						if (Vertex.BoneWeights[j] < Vertex.BoneWeights[WeakestSlot])
+						if (Vert.BoneWeights[j] < Vert.BoneWeights[WeakestSlot])
 						{
 							WeakestSlot = j;
 						}
 					}
 
-					if (Vertex.BoneWeights[WeakestSlot] < Weight.Weight)
+					if (Vert.BoneWeights[WeakestSlot] < Weight.Weight)
 					{
-						Vertex.BoneIds[WeakestSlot] = i;
-						Vertex.BoneWeights[WeakestSlot] = Weight.Weight;
+						Vert.BoneIds[WeakestSlot] = i;
+						Vert.BoneWeights[WeakestSlot] = Weight.Weight;
 					}
 				}
 				else 
 				{
-					auto& Id = Vertex.BoneIds[Count];
-					auto& VertexWeight = Vertex.BoneWeights[Count];
+					auto& Id = Vert.BoneIds[Count];
+					auto& VertexWeight = Vert.BoneWeights[Count];
 					Id = i;
 					VertexWeight = Weight.Weight;
 				}
